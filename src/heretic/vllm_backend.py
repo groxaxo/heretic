@@ -48,14 +48,11 @@ class VLLMInferenceBackend:
         self.model_path = model_path
         self.tokenizer_path = tokenizer_path
         
-        # Pass dtype to vLLM - it will validate and handle it appropriately
-        vllm_dtype = dtype
-        
         # Initialize vLLM engine with optional quantization
         llm_kwargs = {
             "model": model_path,
             "tokenizer": tokenizer_path,
-            "dtype": vllm_dtype,
+            "dtype": dtype,  # vLLM will validate and handle it appropriately
             "gpu_memory_utilization": gpu_memory_utilization,
             "trust_remote_code": True,
             "enforce_eager": False,  # Use CUDA graph for better performance

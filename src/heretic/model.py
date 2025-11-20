@@ -114,8 +114,8 @@ class Model:
             )
 
     def reload_model(self):
-        # Keep the current dtype string for consistency
-        dtype_str = self.current_dtype if self.current_dtype else "auto"
+        # Keep the current dtype for consistency (already stored as string)
+        reload_dtype = self.current_dtype if self.current_dtype else "auto"
 
         # Clean up vLLM backend if it exists
         if self.vllm_backend is not None:
@@ -129,7 +129,7 @@ class Model:
 
         self.model = AutoModelForCausalLM.from_pretrained(
             self.settings.model,
-            dtype=dtype_str,
+            dtype=reload_dtype,
             device_map=self.settings.device_map,
         )
         # current_dtype remains the same as before
@@ -158,6 +158,8 @@ class Model:
         
         try:
             print("* Initializing vLLM backend for inference...")
+            # Use base model for tokenizer since tokenizer doesn't change during abliteration
+            # The abliterated model and base model share the same tokenizer
             self.vllm_backend = VLLMInferenceBackend(
                 model_path=model_path,
                 tokenizer_path=self.settings.model,
