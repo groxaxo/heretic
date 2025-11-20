@@ -28,6 +28,41 @@ class Settings(BaseSettings):
         description="If this model ID or path is set, then instead of abliterating the main model, evaluate this model relative to the main model.",
     )
 
+    inference_backend: str = Field(
+        default="transformers",
+        description=(
+            "Backend to use for inference. Options: 'transformers' (default, slower but more compatible) "
+            "or 'vllm' (faster inference, especially for AWQ/GPTQ quantized models). "
+            "Note: Abliteration always uses transformers; vLLM is only used for evaluating saved models."
+        ),
+    )
+    
+    quantization: str | None = Field(
+        default=None,
+        description=(
+            "Quantization format for the model (e.g., 'awq', 'gptq'). "
+            "This is automatically detected by transformers and vLLM in most cases, "
+            "but can be specified explicitly if needed."
+        ),
+    )
+    
+    vllm_gpu_memory_utilization: float = Field(
+        default=0.9,
+        description=(
+            "Fraction of GPU memory to use for vLLM (0.0 to 1.0). "
+            "Default is 0.9. Lower this if you experience out-of-memory errors with vLLM."
+        ),
+    )
+    
+    vllm_max_model_len: int | None = Field(
+        default=None,
+        description=(
+            "Maximum sequence length for vLLM (in tokens). "
+            "If None, vLLM will use the model's default max length. "
+            "Set this lower if you experience out-of-memory errors with vLLM."
+        ),
+    )
+
     dtypes: list[str] = Field(
         default=[
             # In practice, "auto" almost always means bfloat16.

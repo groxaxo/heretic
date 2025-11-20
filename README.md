@@ -73,6 +73,76 @@ save the model, upload it to Hugging Face, chat with it to test how well it work
 or any combination of those actions.
 
 
+### Using vLLM for faster inference
+
+Heretic now supports [vLLM](https://github.com/vllm-project/vllm) for significantly faster inference,
+particularly beneficial for AWQ/GPTQ quantized models. vLLM can provide 10-100x speedup for text generation
+compared to the standard transformers backend.
+
+**Architecture:** The abliteration process (weight modification) always uses transformers, as it requires
+direct access to model weights. vLLM is used only for inference during model evaluation. This hybrid approach
+gives you the flexibility of transformers for the abliteration process and the speed of vLLM for evaluation.
+
+**Installation:** vLLM is an optional dependency. To install Heretic with vLLM support:
+
+```bash
+pip install heretic-llm[vllm]
+```
+
+Or install vLLM separately after installing Heretic:
+
+```bash
+pip install vllm
+```
+
+To use vLLM for evaluating a saved model:
+
+```bash
+heretic --model base/model --evaluate-model path/to/abliterated-model --inference-backend vllm
+```
+
+Or add to your `config.toml`:
+
+```toml
+inference_backend = "vllm"
+```
+
+**When to use vLLM:**
+- Evaluating pre-abliterated models (much faster)
+- Working with AWQ/GPTQ quantized models
+- When you need high-throughput inference
+
+**When to use transformers (default):**
+- Running the abliteration optimization process
+- When vLLM is not available on your system
+- For maximum compatibility
+
+**Example workflow with AWQ models:**
+
+```bash
+# Step 1: Abliterate an AWQ model (uses transformers for weight modification)
+heretic TheBloke/Llama-2-7B-Chat-AWQ
+
+# Step 2: Save the abliterated model
+# (Follow the interactive prompts to save)
+
+# Step 3: Evaluate with vLLM for fast performance
+heretic --model TheBloke/Llama-2-7B-Chat-AWQ \
+        --evaluate-model ./saved-abliterated-model \
+        --inference-backend vllm \
+        --quantization awq
+```
+
+**Troubleshooting vLLM:**
+
+If you experience out-of-memory errors with vLLM, try:
+1. Lower GPU memory utilization: `--vllm-gpu-memory-utilization 0.8`
+2. Set a smaller max sequence length: `--vllm-max-model-len 2048`
+3. Use transformers backend instead: `--inference-backend transformers`
+
+vLLM requires CUDA/ROCm. If vLLM fails to initialize, Heretic will automatically fall back to the transformers backend.
+
+
 ## How it works
 
 Heretic implements a parametrized variant of directional ablation. For each

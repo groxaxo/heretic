@@ -122,6 +122,15 @@ def run():
     warnings.filterwarnings("ignore", category=ExperimentalWarning)
 
     model = Model(settings)
+    
+    # Inform user about vLLM usage for optimization trials
+    if settings.inference_backend == "vllm" and settings.evaluate_model is None:
+        print()
+        print(
+            "[yellow]Note: vLLM backend is specified, but it cannot be used during abliteration trials "
+            "because the model weights are modified in memory. vLLM will be used only for the final "
+            "evaluation of saved models. During optimization, transformers backend will be used.[/]"
+        )
 
     print()
     print(f"Loading good prompts from [bold]{settings.good_prompts.dataset}[/]...")
@@ -186,6 +195,12 @@ def run():
         print(f"Loading model [bold]{settings.evaluate_model}[/]...")
         settings.model = settings.evaluate_model
         model.reload_model()
+        
+        # Initialize vLLM backend for evaluation if enabled
+        # This is where vLLM shines - evaluating a saved model
+        if settings.inference_backend == "vllm":
+            model.initialize_vllm_backend(settings.evaluate_model)
+        
         print("* Evaluating...")
         evaluator.get_score()
         return
