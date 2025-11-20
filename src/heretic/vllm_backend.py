@@ -48,8 +48,8 @@ class VLLMInferenceBackend:
         self.model_path = model_path
         self.tokenizer_path = tokenizer_path
         
-        # Convert dtype string to vLLM format
-        vllm_dtype = dtype if dtype in ["auto", "half", "float16", "bfloat16", "float", "float32"] else "auto"
+        # Pass dtype to vLLM - it will validate and handle it appropriately
+        vllm_dtype = dtype
         
         # Initialize vLLM engine with optional quantization
         llm_kwargs = {
@@ -139,8 +139,9 @@ class VLLMInferenceBackend:
             # Free vLLM resources
             try:
                 del self.llm
-            except Exception:
-                pass  # Ignore cleanup errors
+            except AttributeError:
+                # Already cleaned up or never initialized
+                pass
     
     def __del__(self):
         """Clean up vLLM resources."""

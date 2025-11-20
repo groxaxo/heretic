@@ -114,7 +114,8 @@ class Model:
             )
 
     def reload_model(self):
-        dtype = self.model.dtype
+        # Keep the current dtype string for consistency
+        dtype_str = self.current_dtype if self.current_dtype else "auto"
 
         # Clean up vLLM backend if it exists
         if self.vllm_backend is not None:
@@ -128,10 +129,10 @@ class Model:
 
         self.model = AutoModelForCausalLM.from_pretrained(
             self.settings.model,
-            dtype=dtype,
+            dtype=dtype_str,
             device_map=self.settings.device_map,
         )
-        self.current_dtype = dtype
+        # current_dtype remains the same as before
 
     def initialize_vllm_backend(self, model_path: str | None = None):
         """

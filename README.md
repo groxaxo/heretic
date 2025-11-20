@@ -83,6 +83,18 @@ compared to the standard transformers backend.
 direct access to model weights. vLLM is used only for inference during model evaluation. This hybrid approach
 gives you the flexibility of transformers for the abliteration process and the speed of vLLM for evaluation.
 
+**Installation:** vLLM is an optional dependency. To install Heretic with vLLM support:
+
+```bash
+pip install heretic-llm[vllm]
+```
+
+Or install vLLM separately after installing Heretic:
+
+```bash
+pip install vllm
+```
+
 To use vLLM for evaluating a saved model:
 
 ```bash
