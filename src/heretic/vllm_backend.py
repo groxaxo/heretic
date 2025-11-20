@@ -135,13 +135,9 @@ class VLLMInferenceBackend:
 
     def cleanup(self):
         """Clean up vLLM resources explicitly."""
-        if hasattr(self, 'llm'):
+        if hasattr(self, 'llm') and self.llm is not None:
             # Free vLLM resources
-            try:
-                del self.llm
-            except AttributeError:
-                # Already cleaned up or never initialized
-                pass
+            del self.llm
     
     def __del__(self):
         """Clean up vLLM resources."""
