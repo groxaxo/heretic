@@ -186,6 +186,12 @@ def run():
         print(f"Loading model [bold]{settings.evaluate_model}[/]...")
         settings.model = settings.evaluate_model
         model.reload_model()
+        
+        # Initialize vLLM backend for evaluation if enabled
+        # This is where vLLM shines - evaluating a saved model
+        if settings.inference_backend == "vllm":
+            model.initialize_vllm_backend(settings.evaluate_model)
+        
         print("* Evaluating...")
         evaluator.get_score()
         return

@@ -28,6 +28,11 @@ class Settings(BaseSettings):
         description="If this model ID or path is set, then instead of abliterating the main model, evaluate this model relative to the main model.",
     )
 
+    inference_backend: str = Field(
+        default="transformers",
+        description="Backend to use for inference. Options: 'transformers' (default, slower but more compatible) or 'vllm' (faster, especially for AWQ models).",
+    )
+
     dtypes: list[str] = Field(
         default=[
             # In practice, "auto" almost always means bfloat16.

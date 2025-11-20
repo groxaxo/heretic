@@ -22,6 +22,14 @@ from transformers.generation.utils import GenerateOutput
 from .config import Settings
 from .utils import batchify, empty_cache, print
 
+# Import vLLM backend, but make it optional
+try:
+    from .vllm_backend import VLLMInferenceBackend
+    VLLM_AVAILABLE = True
+except ImportError:
+    VLLM_AVAILABLE = False
+    VLLMInferenceBackend = None
+
 
 @dataclass
 class AbliterationParameters:
@@ -34,9 +42,30 @@ class AbliterationParameters:
 class Model:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.vllm_backend = None
+        self.current_dtype = None
 
         print()
         print(f"Loading model [bold]{settings.model}[/]...")
+
+        # Validate inference backend setting
+        if settings.inference_backend not in ["transformers", "vllm"]:
+            raise ValueError(
+                f"Invalid inference_backend: {settings.inference_backend}. "
+                "Must be 'transformers' or 'vllm'."
+            )
+
+        if settings.inference_backend == "vllm" and not VLLM_AVAILABLE:
+            print(
+                "[yellow]Warning: vLLM backend requested but vLLM is not installed. "
+                "Falling back to transformers backend.[/]"
+            )
+            settings.inference_backend = "transformers"
+
+        if settings.inference_backend == "vllm":
+            print("* Using [bold]vLLM[/] backend for inference (faster, especially for AWQ models)")
+        else:
+            print("* Using [bold]transformers[/] backend for inference")
 
         self.tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
             settings.model
@@ -58,6 +87,7 @@ class Model:
                     dtype=dtype,
                     device_map=settings.device_map,
                 )
+                self.current_dtype = dtype
 
                 # A test run can reveal dtype-related problems such as the infamous
                 # "RuntimeError: probability tensor contains either `inf`, `nan` or element < 0"
@@ -65,6 +95,7 @@ class Model:
                 self.generate(["Test"], max_new_tokens=1)
             except Exception as error:
                 self.model = None
+                self.current_dtype = None
                 empty_cache()
                 print(f"[red]Failed[/] ({error})")
                 continue
@@ -85,6 +116,12 @@ class Model:
     def reload_model(self):
         dtype = self.model.dtype
 
+        # Clean up vLLM backend if it exists
+        if self.vllm_backend is not None:
+            del self.vllm_backend
+            self.vllm_backend = None
+            empty_cache()
+
         # Purge existing model object from memory to make space.
         self.model = None
         empty_cache()
@@ -94,6 +131,43 @@ class Model:
             dtype=dtype,
             device_map=self.settings.device_map,
         )
+        self.current_dtype = dtype
+
+    def initialize_vllm_backend(self, model_path: str | None = None):
+        """
+        Initialize vLLM backend for inference.
+        
+        This should be called after abliteration is complete to enable
+        fast inference with the modified model.
+        
+        Args:
+            model_path: Path to the model (if None, uses settings.model)
+        """
+        if self.settings.inference_backend != "vllm" or not VLLM_AVAILABLE:
+            return
+        
+        if model_path is None:
+            model_path = self.settings.model
+        
+        # Clean up existing vLLM backend
+        if self.vllm_backend is not None:
+            del self.vllm_backend
+            self.vllm_backend = None
+            empty_cache()
+        
+        try:
+            print("* Initializing vLLM backend for inference...")
+            self.vllm_backend = VLLMInferenceBackend(
+                model_path=model_path,
+                tokenizer_path=self.settings.model,
+                dtype=self.current_dtype if self.current_dtype else "auto",
+                device_map=self.settings.device_map,
+            )
+            print("  * [green]vLLM backend initialized successfully[/]")
+        except Exception as error:
+            print(f"  * [yellow]Warning: Failed to initialize vLLM backend: {error}[/]")
+            print("  * [yellow]Falling back to transformers backend[/]")
+            self.vllm_backend = None
 
     def get_layers(self) -> ModuleList:
         # Most multimodal models.
@@ -257,6 +331,23 @@ class Model:
         )
 
     def get_responses(self, prompts: list[str]) -> list[str]:
+        # Note: vLLM backend is only used when evaluating a pre-saved model,
+        # not during the abliteration trials (where the model is modified in memory).
+        # Use vLLM backend if available for faster inference
+        if self.vllm_backend is not None:
+            # Format prompts with chat template
+            chats = [self.get_chat(prompt) for prompt in prompts]
+            chat_prompts: list[str] = self.tokenizer.apply_chat_template(
+                chats,
+                add_generation_prompt=True,
+                tokenize=False,
+            )
+            return self.vllm_backend.get_responses(
+                chat_prompts,
+                max_new_tokens=self.settings.max_response_length,
+            )
+        
+        # Use transformers backend (default and for abliteration workflow)
         inputs, outputs = self.generate(
             prompts,
             max_new_tokens=self.settings.max_response_length,

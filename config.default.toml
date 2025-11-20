@@ -1,5 +1,13 @@
 # Copy this file to config.toml and edit the configuration to your liking.
 
+# Backend to use for inference (text generation and evaluation).
+# Options:
+#   "transformers" - Default backend, slower but more compatible with all models
+#   "vllm"        - Faster inference backend with excellent AWQ support, but model weights
+#                   are still loaded and modified using transformers for abliteration
+# Note: Abliteration (weight modification) always uses transformers regardless of this setting.
+inference_backend = "transformers"
+
 # List of PyTorch dtypes to try when loading model tensors.
 # If loading with a dtype fails, the next dtype in the list will be tried.
 dtypes = [

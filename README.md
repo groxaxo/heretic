@@ -73,6 +73,37 @@ save the model, upload it to Hugging Face, chat with it to test how well it work
 or any combination of those actions.
 
 
+### Using vLLM for faster inference
+
+Heretic now supports [vLLM](https://github.com/vllm-project/vllm) for significantly faster inference,
+particularly beneficial for AWQ quantized models. vLLM can provide 10-100x speedup for text generation.
+
+**Note:** The abliteration process (weight modification) always uses transformers regardless of this setting,
+as it requires direct access to model weights. vLLM is used for inference during evaluation only.
+
+To use vLLM for evaluating a saved model:
+
+```bash
+heretic --model base/model --evaluate-model path/to/abliterated-model --inference-backend vllm
+```
+
+Or add to your `config.toml`:
+
+```toml
+inference_backend = "vllm"
+```
+
+**When to use vLLM:**
+- Evaluating pre-abliterated models (much faster)
+- Working with AWQ quantized models
+- When you need high-throughput inference
+
+**When to use transformers (default):**
+- Running the abliteration optimization process
+- When vLLM is not available on your system
+- For maximum compatibility
+
+
 ## How it works
 
 Heretic implements a parametrized variant of directional ablation. For each
