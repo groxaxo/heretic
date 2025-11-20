@@ -76,10 +76,12 @@ or any combination of those actions.
 ### Using vLLM for faster inference
 
 Heretic now supports [vLLM](https://github.com/vllm-project/vllm) for significantly faster inference,
-particularly beneficial for AWQ quantized models. vLLM can provide 10-100x speedup for text generation.
+particularly beneficial for AWQ/GPTQ quantized models. vLLM can provide 10-100x speedup for text generation
+compared to the standard transformers backend.
 
-**Note:** The abliteration process (weight modification) always uses transformers regardless of this setting,
-as it requires direct access to model weights. vLLM is used for inference during evaluation only.
+**Architecture:** The abliteration process (weight modification) always uses transformers, as it requires
+direct access to model weights. vLLM is used only for inference during model evaluation. This hybrid approach
+gives you the flexibility of transformers for the abliteration process and the speed of vLLM for evaluation.
 
 To use vLLM for evaluating a saved model:
 
@@ -95,13 +97,29 @@ inference_backend = "vllm"
 
 **When to use vLLM:**
 - Evaluating pre-abliterated models (much faster)
-- Working with AWQ quantized models
+- Working with AWQ/GPTQ quantized models
 - When you need high-throughput inference
 
 **When to use transformers (default):**
 - Running the abliteration optimization process
 - When vLLM is not available on your system
 - For maximum compatibility
+
+**Example workflow with AWQ models:**
+
+```bash
+# Step 1: Abliterate an AWQ model (uses transformers for weight modification)
+heretic TheBloke/Llama-2-7B-Chat-AWQ
+
+# Step 2: Save the abliterated model
+# (Follow the interactive prompts to save)
+
+# Step 3: Evaluate with vLLM for fast performance
+heretic --model TheBloke/Llama-2-7B-Chat-AWQ \
+        --evaluate-model ./saved-abliterated-model \
+        --inference-backend vllm \
+        --quantization awq
+```
 
 
 ## How it works

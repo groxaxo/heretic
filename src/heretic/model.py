@@ -162,8 +162,11 @@ class Model:
                 tokenizer_path=self.settings.model,
                 dtype=self.current_dtype if self.current_dtype else "auto",
                 device_map=self.settings.device_map,
+                quantization=self.settings.quantization,
             )
             print("  * [green]vLLM backend initialized successfully[/]")
+            if self.settings.quantization:
+                print(f"  * Using quantization: [bold]{self.settings.quantization}[/]")
         except Exception as error:
             print(f"  * [yellow]Warning: Failed to initialize vLLM backend: {error}[/]")
             print("  * [yellow]Falling back to transformers backend[/]")

@@ -30,7 +30,20 @@ class Settings(BaseSettings):
 
     inference_backend: str = Field(
         default="transformers",
-        description="Backend to use for inference. Options: 'transformers' (default, slower but more compatible) or 'vllm' (faster, especially for AWQ models).",
+        description=(
+            "Backend to use for inference. Options: 'transformers' (default, slower but more compatible) "
+            "or 'vllm' (faster inference, especially for AWQ/GPTQ quantized models). "
+            "Note: Abliteration always uses transformers; vLLM is only used for evaluating saved models."
+        ),
+    )
+    
+    quantization: str | None = Field(
+        default=None,
+        description=(
+            "Quantization format for the model (e.g., 'awq', 'gptq'). "
+            "This is automatically detected by transformers and vLLM in most cases, "
+            "but can be specified explicitly if needed."
+        ),
     )
 
     dtypes: list[str] = Field(

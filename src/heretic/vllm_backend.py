@@ -31,6 +31,7 @@ class VLLMInferenceBackend:
         device_map: str | dict = "auto",
         gpu_memory_utilization: float = 0.9,
         max_model_len: int | None = None,
+        quantization: str | None = None,
     ):
         """
         Initialize vLLM backend.
@@ -42,6 +43,7 @@ class VLLMInferenceBackend:
             device_map: Device mapping (vLLM handles this automatically)
             gpu_memory_utilization: Fraction of GPU memory to use (default 0.9)
             max_model_len: Maximum sequence length (None = auto)
+            quantization: Quantization format ('awq', 'gptq', etc.) - auto-detected if None
         """
         self.model_path = model_path
         self.tokenizer_path = tokenizer_path
@@ -49,16 +51,25 @@ class VLLMInferenceBackend:
         # Convert dtype string to vLLM format
         vllm_dtype = dtype if dtype in ["auto", "half", "float16", "bfloat16", "float", "float32"] else "auto"
         
-        # Initialize vLLM engine
-        self.llm = LLM(
-            model=model_path,
-            tokenizer=tokenizer_path,
-            dtype=vllm_dtype,
-            gpu_memory_utilization=gpu_memory_utilization,
-            max_model_len=max_model_len,
-            trust_remote_code=True,
-            enforce_eager=False,  # Use CUDA graph for better performance
-        )
+        # Initialize vLLM engine with optional quantization
+        llm_kwargs = {
+            "model": model_path,
+            "tokenizer": tokenizer_path,
+            "dtype": vllm_dtype,
+            "gpu_memory_utilization": gpu_memory_utilization,
+            "trust_remote_code": True,
+            "enforce_eager": False,  # Use CUDA graph for better performance
+        }
+        
+        # Add quantization if specified
+        if quantization is not None:
+            llm_kwargs["quantization"] = quantization
+        
+        # Add max_model_len if specified
+        if max_model_len is not None:
+            llm_kwargs["max_model_len"] = max_model_len
+        
+        self.llm = LLM(**llm_kwargs)
         
         self.tokenizer = self.llm.get_tokenizer()
 
