@@ -121,6 +121,15 @@ heretic --model TheBloke/Llama-2-7B-Chat-AWQ \
         --quantization awq
 ```
 
+**Troubleshooting vLLM:**
+
+If you experience out-of-memory errors with vLLM, try:
+1. Lower GPU memory utilization: `--vllm-gpu-memory-utilization 0.8`
+2. Set a smaller max sequence length: `--vllm-max-model-len 2048`
+3. Use transformers backend instead: `--inference-backend transformers`
+
+vLLM requires CUDA/ROCm. If vLLM fails to initialize, Heretic will automatically fall back to the transformers backend.
+
 
 ## How it works
 

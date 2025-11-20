@@ -13,6 +13,16 @@ inference_backend = "transformers"
 # Particularly useful when using vLLM backend with quantized models.
 # quantization = "awq"
 
+# vLLM-specific settings (only used when inference_backend = "vllm")
+
+# Fraction of GPU memory to use for vLLM (0.0 to 1.0).
+# Lower this if you experience out-of-memory errors with vLLM.
+vllm_gpu_memory_utilization = 0.9
+
+# Maximum sequence length for vLLM (in tokens).
+# Leave commented for auto-detection. Set explicitly if you experience OOM errors.
+# vllm_max_model_len = 2048
+
 # List of PyTorch dtypes to try when loading model tensors.
 # If loading with a dtype fails, the next dtype in the list will be tried.
 dtypes = [

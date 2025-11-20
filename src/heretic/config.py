@@ -45,6 +45,23 @@ class Settings(BaseSettings):
             "but can be specified explicitly if needed."
         ),
     )
+    
+    vllm_gpu_memory_utilization: float = Field(
+        default=0.9,
+        description=(
+            "Fraction of GPU memory to use for vLLM (0.0 to 1.0). "
+            "Default is 0.9. Lower this if you experience out-of-memory errors with vLLM."
+        ),
+    )
+    
+    vllm_max_model_len: int | None = Field(
+        default=None,
+        description=(
+            "Maximum sequence length for vLLM (in tokens). "
+            "If None, vLLM will use the model's default max length. "
+            "Set this lower if you experience out-of-memory errors with vLLM."
+        ),
+    )
 
     dtypes: list[str] = Field(
         default=[

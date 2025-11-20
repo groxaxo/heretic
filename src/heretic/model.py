@@ -118,7 +118,7 @@ class Model:
 
         # Clean up vLLM backend if it exists
         if self.vllm_backend is not None:
-            del self.vllm_backend
+            self.vllm_backend.cleanup()
             self.vllm_backend = None
             empty_cache()
 
@@ -151,7 +151,7 @@ class Model:
         
         # Clean up existing vLLM backend
         if self.vllm_backend is not None:
-            del self.vllm_backend
+            self.vllm_backend.cleanup()
             self.vllm_backend = None
             empty_cache()
         
@@ -163,10 +163,13 @@ class Model:
                 dtype=self.current_dtype if self.current_dtype else "auto",
                 device_map=self.settings.device_map,
                 quantization=self.settings.quantization,
+                gpu_memory_utilization=self.settings.vllm_gpu_memory_utilization,
+                max_model_len=self.settings.vllm_max_model_len,
             )
             print("  * [green]vLLM backend initialized successfully[/]")
             if self.settings.quantization:
                 print(f"  * Using quantization: [bold]{self.settings.quantization}[/]")
+            print(f"  * GPU memory utilization: [bold]{self.settings.vllm_gpu_memory_utilization:.0%}[/]")
         except Exception as error:
             print(f"  * [yellow]Warning: Failed to initialize vLLM backend: {error}[/]")
             print("  * [yellow]Falling back to transformers backend[/]")

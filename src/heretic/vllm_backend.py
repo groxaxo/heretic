@@ -133,7 +133,15 @@ class VLLMInferenceBackend:
         
         return responses
 
+    def cleanup(self):
+        """Clean up vLLM resources explicitly."""
+        if hasattr(self, 'llm'):
+            # Free vLLM resources
+            try:
+                del self.llm
+            except Exception:
+                pass  # Ignore cleanup errors
+    
     def __del__(self):
         """Clean up vLLM resources."""
-        if hasattr(self, 'llm'):
-            del self.llm
+        self.cleanup()
