@@ -1,0 +1,47 @@
+# Docker Compose configuration for Heretic
+# Usage: docker-compose run heretic heretic MODEL_NAME
+
+version: '3.8'
+
+services:
+  heretic:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: heretic:latest
+    
+    # Enable GPU support (requires nvidia-docker)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    # Mount volumes for persistent data
+    volumes:
+      # Mount Hugging Face cache to persist downloaded models
+      - huggingface-cache:/workspace/.cache/huggingface
+      # Mount current directory for saving models
+      - ./models:/workspace/models
+      # Optional: Mount custom config file
+      # - ./config.toml:/workspace/config.toml
+    
+    # Environment variables
+    environment:
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      # Optional: Set Hugging Face token for private models
+      # - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
+    
+    # Interactive terminal
+    stdin_open: true
+    tty: true
+    
+    # Override default command (set in Dockerfile)
+    # command: heretic MODEL_NAME
+
+volumes:
+  huggingface-cache:
+    driver: local

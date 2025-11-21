@@ -45,17 +45,82 @@ You can find a collection of models that have been decensored using Heretic
 [on Hugging Face](https://huggingface.co/collections/p-e-w/the-bestiary).
 
 
-## Usage
+## Installation
 
-Prepare a Python 3.10+ environment with PyTorch 2.2+ installed as appropriate
-for your hardware. Then run:
+Heretic requires Python 3.10+ and PyTorch 2.2+ with appropriate GPU support for your hardware.
 
+### Option 1: Using uv (Recommended)
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver:
+
+```bash
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone the repository
+git clone https://github.com/p-e-w/heretic.git
+cd heretic
+
+# Install dependencies (includes optional vLLM support)
+uv sync --all-extras
+
+# Run Heretic
+uv run heretic Qwen/Qwen3-4B-Instruct-2507
 ```
-pip install heretic-llm
+
+### Option 2: Using Conda
+
+```bash
+# Clone the repository
+git clone https://github.com/p-e-w/heretic.git
+cd heretic
+
+# Create and activate the Conda environment
+conda env create -f environment.yml
+conda activate heretic
+
+# Install Heretic in development mode
+pip install -e .
+
+# Run Heretic
 heretic Qwen/Qwen3-4B-Instruct-2507
 ```
 
+**Note:** Adjust the CUDA version in `environment.yml` to match your system (e.g., cuda=11.8 or cuda=12.1).
+
+### Option 3: Using Docker
+
+**Prerequisites:** Docker with NVIDIA GPU support ([nvidia-docker](https://github.com/NVIDIA/nvidia-docker))
+
+```bash
+# Clone the repository
+git clone https://github.com/p-e-w/heretic.git
+cd heretic
+
+# Build the Docker image
+docker build -t heretic .
+
+# Run Heretic with GPU support
+docker run --gpus all -it heretic heretic Qwen/Qwen3-4B-Instruct-2507
+
+# Or use Docker Compose for persistent storage
+docker-compose run heretic heretic Qwen/Qwen3-4B-Instruct-2507
+```
+
+**Docker Tips:**
+- Models are cached in a Docker volume to avoid re-downloading
+- Save models to the mounted `./models` directory to access them outside the container
+- Set `HUGGINGFACE_TOKEN` environment variable for private models
+
 Replace `Qwen/Qwen3-4B-Instruct-2507` with whatever model you want to decensor.
+
+## Usage
+
+Once installed, simply run:
+
+```bash
+heretic MODEL_NAME
+```
 
 The process is fully automatic and does not require configuration; however,
 Heretic has a variety of configuration parameters that can be changed for
@@ -83,17 +148,13 @@ compared to the standard transformers backend.
 direct access to model weights. vLLM is used only for inference during model evaluation. This hybrid approach
 gives you the flexibility of transformers for the abliteration process and the speed of vLLM for evaluation.
 
-**Installation:** vLLM is an optional dependency. To install Heretic with vLLM support:
+**Installation:** vLLM is an optional dependency that's included automatically when you use the installation methods above:
 
-```bash
-pip install heretic-llm[vllm]
-```
+- **With uv:** vLLM is included when you run `uv sync --all-extras`
+- **With Conda:** vLLM is listed in `environment.yml` and will be installed automatically
+- **With Docker:** vLLM is included in the Docker image
 
-Or install vLLM separately after installing Heretic:
-
-```bash
-pip install vllm
-```
+If vLLM fails to install on your system (it requires CUDA/ROCm), Heretic will automatically fall back to the transformers backend.
 
 To use vLLM for evaluating a saved model:
 
@@ -124,7 +185,7 @@ inference_backend = "vllm"
 heretic TheBloke/Llama-2-7B-Chat-AWQ
 
 # Step 2: Save the abliterated model
-# (Follow the interactive prompts to save)
+# (Follow the interactive prompts to save to ./saved-abliterated-model)
 
 # Step 3: Evaluate with vLLM for fast performance
 heretic --model TheBloke/Llama-2-7B-Chat-AWQ \

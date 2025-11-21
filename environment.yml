@@ -1,0 +1,58 @@
+# Conda environment file for Heretic
+# Create environment with: conda env create -f environment.yml
+# Activate with: conda activate heretic
+
+name: heretic
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python version
+  - python>=3.10,<3.14
+
+  # PyTorch with CUDA support (adjust cuda version as needed)
+  # For CUDA 11.8:
+  - pytorch>=2.2.0
+  - pytorch-cuda=11.8
+  - cudatoolkit=11.8
+  
+  # Core dependencies
+  - pip
+  - git
+  
+  # Install remaining dependencies via pip
+  - pip:
+      # Core Heretic dependencies
+      - accelerate>=1.10.0
+      - datasets>=4.0.0
+      - hf-transfer>=0.1.9
+      - huggingface-hub>=0.34.4
+      - optuna>=4.5.0
+      - pydantic-settings>=2.10.1
+      - questionary>=2.1.1
+      - rich>=14.1.0
+      - transformers>=4.55.2
+      
+      # Optional: vLLM for faster inference (especially for AWQ/GPTQ models)
+      # Note: vLLM requires CUDA/ROCm and may not install on all systems
+      - vllm>=0.11.0
+      
+      # Install Heretic itself (use -e for development mode)
+      # After creating the environment, run: pip install -e .
+      # Or for regular installation: pip install heretic-llm
+
+# Environment variables
+variables:
+  HF_HUB_ENABLE_HF_TRANSFER: "1"
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+# Notes:
+# 1. For ROCm (AMD GPUs), replace pytorch-cuda with pytorch-rocm
+# 2. For CPU-only installation, remove pytorch-cuda and cudatoolkit
+# 3. Adjust cuda version (11.8, 12.1, etc.) based on your system
+# 4. vLLM is optional but provides significant speedup for inference
+# 5. After creating the environment, cd to the heretic directory and run:
+#    pip install -e . (for development) or pip install heretic-llm (for release)
