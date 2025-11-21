@@ -44,10 +44,17 @@ models with inhomogeneous layers, and certain novel attention systems.
 You can find a collection of models that have been decensored using Heretic
 [on Hugging Face](https://huggingface.co/collections/p-e-w/the-bestiary).
 
+## Documentation
+
+- **[Installation & Usage](#installation)** - Getting started guide (below)
+- **[DOCKER.md](DOCKER.md)** - Comprehensive Docker deployment guide
+- **[DEVELOPMENT.md](DEVELOPMENT.md)** - Contributing and development guide
 
 ## Installation
 
 Heretic requires Python 3.10+ and PyTorch 2.2+ with appropriate GPU support for your hardware.
+
+**Note:** This project uses [uv](https://github.com/astral-sh/uv) for fast, reliable Python dependency management. We recommend using one of the installation methods below rather than installing with pip.
 
 ### Option 1: Using uv (Recommended)
 
@@ -97,20 +104,15 @@ heretic Qwen/Qwen3-4B-Instruct-2507
 git clone https://github.com/p-e-w/heretic.git
 cd heretic
 
-# Build the Docker image
-docker build -t heretic .
-
-# Run Heretic with GPU support
-docker run --gpus all -it heretic heretic Qwen/Qwen3-4B-Instruct-2507
-
-# Or use Docker Compose for persistent storage
+# Build and run with Docker Compose (recommended)
 docker-compose run heretic heretic Qwen/Qwen3-4B-Instruct-2507
+
+# Or build and run with Docker directly
+docker build -t heretic .
+docker run --gpus all -it heretic heretic Qwen/Qwen3-4B-Instruct-2507
 ```
 
-**Docker Tips:**
-- Models are cached in a Docker volume to avoid re-downloading
-- Save models to the mounted `./models` directory to access them outside the container
-- Set `HUGGINGFACE_TOKEN` environment variable for private models
+For detailed Docker usage, configuration, and troubleshooting, see **[DOCKER.md](DOCKER.md)**.
 
 Replace `Qwen/Qwen3-4B-Instruct-2507` with whatever model you want to decensor.
 
