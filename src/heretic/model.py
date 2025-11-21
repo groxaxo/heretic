@@ -110,32 +110,42 @@ class Model:
             raise Exception("Failed to load model with all configured dtypes.")
 
         # Check if model appears to be quantized and warn user
-        if (
-            settings.evaluate_model is None
-        ):  # Only check during abliteration, not evaluation
+        # Only perform this check during abliteration, not evaluation, because:
+        # 1. Evaluation doesn't modify weights, so quantized models are fine
+        # 2. We may be evaluating a saved abliterated model that was later quantized
+        if settings.evaluate_model is None:
+            is_quantized = False
             try:
-                first_layer = self.get_layers()[0]
-                # Check for common quantization indicators
-                if (
-                    hasattr(first_layer.self_attn.o_proj, "qweight")
-                    or hasattr(first_layer.self_attn.o_proj, "qzeros")
-                    or "awq" in settings.model.lower()
-                    or "gptq" in settings.model.lower()
+                # Check model config for quantization_config attribute (most reliable)
+                if hasattr(self.model.config, "quantization_config"):
+                    is_quantized = True
+                # Fall back to checking first layer for quantized weight attributes
+                elif hasattr(self.get_layers()[0].self_attn.o_proj, "qweight"):
+                    is_quantized = True
+                elif hasattr(self.get_layers()[0].self_attn.o_proj, "qzeros"):
+                    is_quantized = True
+                # Last resort: check model name for common quantization indicators
+                elif any(
+                    indicator in settings.model.lower()
+                    for indicator in ["awq", "gptq", "gguf"]
                 ):
-                    print()
-                    print(
-                        "[yellow]Warning: This model appears to be quantized (AWQ/GPTQ).[/]"
-                    )
-                    print(
-                        "[yellow]Abliteration of quantized models may not work correctly.[/]"
-                    )
-                    print(
-                        "[yellow]Consider using the base (non-quantized) version of this model instead.[/]"
-                    )
-                    print()
-            except Exception:
-                # If check fails, continue silently
+                    is_quantized = True
+            except (AttributeError, IndexError):
+                # If check fails (e.g., unusual model structure), continue without warning
                 pass
+
+            if is_quantized:
+                print()
+                print(
+                    "[yellow]Warning: This model appears to be quantized (AWQ/GPTQ).[/]"
+                )
+                print(
+                    "[yellow]Abliteration of quantized models may not work correctly.[/]"
+                )
+                print(
+                    "[yellow]Consider using the base (non-quantized) version of this model instead.[/]"
+                )
+                print()
 
         print(f"* Transformer model with [bold]{len(self.get_layers())}[/] layers")
         print("* Abliterable components:")

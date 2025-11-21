@@ -142,9 +142,9 @@ or any combination of those actions.
 
 ### Using vLLM for faster inference
 
-Heretic now supports [vLLM](https://github.com/vllm-project/vllm) for significantly faster inference,
-particularly beneficial for AWQ/GPTQ quantized models. vLLM can provide 10-100x speedup for text generation
-compared to the standard transformers backend.
+Heretic now supports [vLLM](https://github.com/vllm-project/vllm) for significantly faster inference.
+vLLM can provide 10-100x speedup for text generation compared to the standard transformers backend,
+and works well with both quantized and non-quantized models for evaluation purposes.
 
 **Architecture:** The abliteration process (weight modification) always uses transformers, as it requires
 direct access to model weights. vLLM is used only for inference during model evaluation. This hybrid approach
