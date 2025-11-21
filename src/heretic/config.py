@@ -36,7 +36,7 @@ class Settings(BaseSettings):
             "Note: Abliteration always uses transformers; vLLM is only used for evaluating saved models."
         ),
     )
-    
+
     quantization: str | None = Field(
         default=None,
         description=(
@@ -45,7 +45,7 @@ class Settings(BaseSettings):
             "but can be specified explicitly if needed."
         ),
     )
-    
+
     vllm_gpu_memory_utilization: float = Field(
         default=0.9,
         description=(
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
             "Default is 0.9. Lower this if you experience out-of-memory errors with vLLM."
         ),
     )
-    
+
     vllm_max_model_len: int | None = Field(
         default=None,
         description=(

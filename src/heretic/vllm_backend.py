@@ -18,7 +18,7 @@ from vllm.outputs import RequestOutput
 class VLLMInferenceBackend:
     """
     Wrapper for vLLM inference engine.
-    
+
     This backend is used for text generation during evaluation, while the
     transformers backend is still used for weight modification (abliteration).
     """
@@ -35,7 +35,7 @@ class VLLMInferenceBackend:
     ):
         """
         Initialize vLLM backend.
-        
+
         Args:
             model_path: Path or HuggingFace model ID
             tokenizer_path: Path or HuggingFace tokenizer ID
@@ -47,7 +47,7 @@ class VLLMInferenceBackend:
         """
         self.model_path = model_path
         self.tokenizer_path = tokenizer_path
-        
+
         # Initialize vLLM engine with optional quantization
         llm_kwargs = {
             "model": model_path,
@@ -57,17 +57,17 @@ class VLLMInferenceBackend:
             "trust_remote_code": True,
             "enforce_eager": False,  # Use CUDA graph for better performance
         }
-        
+
         # Add quantization if specified
         if quantization is not None:
             llm_kwargs["quantization"] = quantization
-        
+
         # Add max_model_len if specified
         if max_model_len is not None:
             llm_kwargs["max_model_len"] = max_model_len
-        
+
         self.llm = LLM(**llm_kwargs)
-        
+
         self.tokenizer = self.llm.get_tokenizer()
 
     def generate(
@@ -81,7 +81,7 @@ class VLLMInferenceBackend:
     ) -> list[RequestOutput]:
         """
         Generate text for a batch of prompts.
-        
+
         Args:
             prompts: List of input prompts
             max_new_tokens: Maximum number of tokens to generate
@@ -89,7 +89,7 @@ class VLLMInferenceBackend:
             top_p: Top-p sampling parameter
             top_k: Top-k sampling parameter
             **kwargs: Additional arguments (for compatibility)
-            
+
         Returns:
             List of RequestOutput objects from vLLM
         """
@@ -100,7 +100,7 @@ class VLLMInferenceBackend:
             top_k=top_k,
             skip_special_tokens=True,
         )
-        
+
         outputs = self.llm.generate(prompts, sampling_params)
         return outputs
 
@@ -111,31 +111,31 @@ class VLLMInferenceBackend:
     ) -> list[str]:
         """
         Generate responses for a batch of prompts.
-        
+
         Args:
             prompts: List of input prompts
             max_new_tokens: Maximum number of tokens to generate
-            
+
         Returns:
             List of generated text responses (only the new tokens)
         """
         outputs = self.generate(prompts, max_new_tokens=max_new_tokens)
-        
+
         # Extract only the generated text (without the prompt)
         responses = []
         for output in outputs:
             # vLLM returns only the generated text by default when skip_special_tokens=True
             generated_text = output.outputs[0].text
             responses.append(generated_text)
-        
+
         return responses
 
     def cleanup(self):
         """Clean up vLLM resources explicitly."""
-        if hasattr(self, 'llm') and self.llm is not None:
+        if hasattr(self, "llm") and self.llm is not None:
             # Free vLLM resources
             del self.llm
-    
+
     def __del__(self):
         """Clean up vLLM resources."""
         self.cleanup()

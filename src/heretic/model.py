@@ -25,6 +25,7 @@ from .utils import batchify, empty_cache, print
 # Import vLLM backend, but make it optional
 try:
     from .vllm_backend import VLLMInferenceBackend
+
     VLLM_AVAILABLE = True
 except ImportError:
     VLLM_AVAILABLE = False
@@ -63,7 +64,9 @@ class Model:
             settings.inference_backend = "transformers"
 
         if settings.inference_backend == "vllm":
-            print("* Using [bold]vLLM[/] backend for inference (faster, especially for AWQ models)")
+            print(
+                "* Using [bold]vLLM[/] backend for inference (faster, especially for AWQ models)"
+            )
         else:
             print("* Using [bold]transformers[/] backend for inference")
 
@@ -137,25 +140,25 @@ class Model:
     def initialize_vllm_backend(self, model_path: str | None = None):
         """
         Initialize vLLM backend for inference.
-        
+
         This should be called after abliteration is complete to enable
         fast inference with the modified model.
-        
+
         Args:
             model_path: Path to the model (if None, uses settings.model)
         """
         if self.settings.inference_backend != "vllm" or not VLLM_AVAILABLE:
             return
-        
+
         if model_path is None:
             model_path = self.settings.model
-        
+
         # Clean up existing vLLM backend
         if self.vllm_backend is not None:
             self.vllm_backend.cleanup()
             self.vllm_backend = None
             empty_cache()
-        
+
         try:
             print("* Initializing vLLM backend for inference...")
             # Use base model for tokenizer since tokenizer doesn't change during abliteration
@@ -172,7 +175,9 @@ class Model:
             print("  * [green]vLLM backend initialized successfully[/]")
             if self.settings.quantization:
                 print(f"  * Using quantization: [bold]{self.settings.quantization}[/]")
-            print(f"  * GPU memory utilization: [bold]{self.settings.vllm_gpu_memory_utilization:.0%}[/]")
+            print(
+                f"  * GPU memory utilization: [bold]{self.settings.vllm_gpu_memory_utilization:.0%}[/]"
+            )
         except Exception as error:
             print(f"  * [yellow]Warning: Failed to initialize vLLM backend: {error}[/]")
             print("  * [yellow]Falling back to transformers backend[/]")
@@ -355,7 +360,7 @@ class Model:
                 chat_prompts,
                 max_new_tokens=self.settings.max_response_length,
             )
-        
+
         # Use transformers backend (default and for abliteration workflow)
         inputs, outputs = self.generate(
             prompts,
