@@ -150,6 +150,14 @@ compared to the standard transformers backend.
 direct access to model weights. vLLM is used only for inference during model evaluation. This hybrid approach
 gives you the flexibility of transformers for the abliteration process and the speed of vLLM for evaluation.
 
+**Important Note on Quantized Models:** Heretic modifies model weights in-place using transformers. This works
+with standard (non-quantized) models. For quantized models (AWQ/GPTQ), you should:
+1. Start with the **base non-quantized model** for abliteration
+2. Save the abliterated model
+3. Optionally quantize the abliterated model afterwards (or use vLLM for fast inference with the non-quantized abliterated model)
+
+Attempting to directly abliterate an already-quantized model may fail or produce unexpected results.
+
 **Installation:** vLLM is an optional dependency that's included automatically when you use the installation methods above:
 
 - **With uv:** vLLM is included when you run `uv sync --all-extras`
@@ -172,29 +180,31 @@ inference_backend = "vllm"
 
 **When to use vLLM:**
 - Evaluating pre-abliterated models (much faster)
-- Working with AWQ/GPTQ quantized models
+- Fast inference with non-quantized abliterated models
 - When you need high-throughput inference
 
 **When to use transformers (default):**
-- Running the abliteration optimization process
+- Running the abliteration optimization process (required)
 - When vLLM is not available on your system
 - For maximum compatibility
 
-**Example workflow with AWQ models:**
+**Recommended workflow:**
 
 ```bash
-# Step 1: Abliterate an AWQ model (uses transformers for weight modification)
-heretic TheBloke/Llama-2-7B-Chat-AWQ
+# Step 1: Start with the BASE (non-quantized) model for abliteration
+heretic meta-llama/Llama-2-7b-chat-hf
 
-# Step 2: Save the abliterated model
-# (Follow the interactive prompts to save to ./saved-abliterated-model)
+# Step 2: Save the abliterated model (follow interactive prompts)
+# The abliterated model will be saved to your chosen directory
 
-# Step 3: Evaluate with vLLM for fast performance
-heretic --model TheBloke/Llama-2-7B-Chat-AWQ \
+# Step 3: Use vLLM for fast inference with the abliterated model
+heretic --model meta-llama/Llama-2-7b-chat-hf \
         --evaluate-model ./saved-abliterated-model \
-        --inference-backend vllm \
-        --quantization awq
+        --inference-backend vllm
 ```
+
+**Note:** If you need a quantized model for deployment, quantize the abliterated model after saving it,
+rather than trying to abliterate an already-quantized model.
 
 **Troubleshooting vLLM:**
 

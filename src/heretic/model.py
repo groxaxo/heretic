@@ -109,6 +109,34 @@ class Model:
         if self.model is None:
             raise Exception("Failed to load model with all configured dtypes.")
 
+        # Check if model appears to be quantized and warn user
+        if (
+            settings.evaluate_model is None
+        ):  # Only check during abliteration, not evaluation
+            try:
+                first_layer = self.get_layers()[0]
+                # Check for common quantization indicators
+                if (
+                    hasattr(first_layer.self_attn.o_proj, "qweight")
+                    or hasattr(first_layer.self_attn.o_proj, "qzeros")
+                    or "awq" in settings.model.lower()
+                    or "gptq" in settings.model.lower()
+                ):
+                    print()
+                    print(
+                        "[yellow]Warning: This model appears to be quantized (AWQ/GPTQ).[/]"
+                    )
+                    print(
+                        "[yellow]Abliteration of quantized models may not work correctly.[/]"
+                    )
+                    print(
+                        "[yellow]Consider using the base (non-quantized) version of this model instead.[/]"
+                    )
+                    print()
+            except Exception:
+                # If check fails, continue silently
+                pass
+
         print(f"* Transformer model with [bold]{len(self.get_layers())}[/] layers")
         print("* Abliterable components:")
         for component, matrices in self.get_layer_matrices(0).items():
@@ -257,6 +285,14 @@ class Model:
         direction_index: float | None,
         parameters: dict[str, AbliterationParameters],
     ):
+        """
+        Modify model weights to remove refusal behavior.
+
+        Note: This method performs in-place weight modifications using matrix.sub_().
+        It is designed for standard (non-quantized) models. Quantized models (AWQ/GPTQ)
+        may not support in-place weight modifications and should be abliterated in their
+        non-quantized form first, then quantized afterwards if needed.
+        """
         if direction_index is None:
             refusal_direction = None
         else:

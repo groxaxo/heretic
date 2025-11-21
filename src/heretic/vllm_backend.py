@@ -4,9 +4,12 @@
 """
 vLLM backend for fast inference.
 
-This module provides vLLM integration for faster inference, particularly beneficial
-for AWQ quantized models. The abliteration process still uses transformers for
-weight modification, but inference (generation and evaluation) can use vLLM.
+This module provides vLLM integration for faster inference. The abliteration process
+always uses transformers for weight modification on non-quantized models. vLLM is used
+only for inference (generation and evaluation) after abliteration is complete.
+
+Note: vLLM can work with quantized models for inference, but abliteration must be
+performed on non-quantized models first.
 """
 
 from typing import Any
