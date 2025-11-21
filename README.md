@@ -44,18 +44,85 @@ models with inhomogeneous layers, and certain novel attention systems.
 You can find a collection of models that have been decensored using Heretic
 [on Hugging Face](https://huggingface.co/collections/p-e-w/the-bestiary).
 
+## Documentation
 
-## Usage
+- **[Installation & Usage](#installation)** - Getting started guide (below)
+- **[DOCKER.md](DOCKER.md)** - Comprehensive Docker deployment guide
+- **[DEVELOPMENT.md](DEVELOPMENT.md)** - Contributing and development guide
 
-Prepare a Python 3.10+ environment with PyTorch 2.2+ installed as appropriate
-for your hardware. Then run:
+## Installation
 
+Heretic requires Python 3.10+ and PyTorch 2.2+ with appropriate GPU support for your hardware.
+
+**Note:** This project uses [uv](https://github.com/astral-sh/uv) for fast, reliable Python dependency management. We recommend using one of the installation methods below rather than installing with pip.
+
+### Option 1: Using uv (Recommended)
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver:
+
+```bash
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone the repository
+git clone https://github.com/p-e-w/heretic.git
+cd heretic
+
+# Install dependencies (includes optional vLLM support)
+uv sync --all-extras
+
+# Run Heretic
+uv run heretic Qwen/Qwen3-4B-Instruct-2507
 ```
-pip install heretic-llm
+
+### Option 2: Using Conda
+
+```bash
+# Clone the repository
+git clone https://github.com/p-e-w/heretic.git
+cd heretic
+
+# Create and activate the Conda environment
+conda env create -f environment.yml
+conda activate heretic
+
+# Install Heretic in development mode
+pip install -e .
+
+# Run Heretic
 heretic Qwen/Qwen3-4B-Instruct-2507
 ```
 
+**Note:** Adjust the CUDA version in `environment.yml` to match your system (e.g., cuda=11.8 or cuda=12.1).
+
+### Option 3: Using Docker
+
+**Prerequisites:** Docker with NVIDIA GPU support ([nvidia-docker](https://github.com/NVIDIA/nvidia-docker))
+
+```bash
+# Clone the repository
+git clone https://github.com/p-e-w/heretic.git
+cd heretic
+
+# Build and run with Docker Compose (recommended)
+docker-compose run heretic heretic Qwen/Qwen3-4B-Instruct-2507
+
+# Or build and run with Docker directly
+docker build -t heretic .
+docker run --gpus all -it heretic heretic Qwen/Qwen3-4B-Instruct-2507
+```
+
+For detailed Docker usage, configuration, and troubleshooting, see **[DOCKER.md](DOCKER.md)**.
+
 Replace `Qwen/Qwen3-4B-Instruct-2507` with whatever model you want to decensor.
+
+## Usage
+
+Once installed, simply run:
+
+```bash
+heretic MODEL_NAME
+```
 
 The process is fully automatic and does not require configuration; however,
 Heretic has a variety of configuration parameters that can be changed for
@@ -75,25 +142,29 @@ or any combination of those actions.
 
 ### Using vLLM for faster inference
 
-Heretic now supports [vLLM](https://github.com/vllm-project/vllm) for significantly faster inference,
-particularly beneficial for AWQ/GPTQ quantized models. vLLM can provide 10-100x speedup for text generation
-compared to the standard transformers backend.
+Heretic now supports [vLLM](https://github.com/vllm-project/vllm) for significantly faster inference.
+vLLM can provide 10-100x speedup for text generation compared to the standard transformers backend,
+and works well with both quantized and non-quantized models for evaluation purposes.
 
 **Architecture:** The abliteration process (weight modification) always uses transformers, as it requires
 direct access to model weights. vLLM is used only for inference during model evaluation. This hybrid approach
 gives you the flexibility of transformers for the abliteration process and the speed of vLLM for evaluation.
 
-**Installation:** vLLM is an optional dependency. To install Heretic with vLLM support:
+**Important Note on Quantized Models:** Heretic modifies model weights in-place using transformers. This works
+with standard (non-quantized) models. For quantized models (AWQ/GPTQ), you should:
+1. Start with the **base non-quantized model** for abliteration
+2. Save the abliterated model
+3. Optionally quantize the abliterated model afterwards (or use vLLM for fast inference with the non-quantized abliterated model)
 
-```bash
-pip install heretic-llm[vllm]
-```
+Attempting to directly abliterate an already-quantized model may fail or produce unexpected results.
 
-Or install vLLM separately after installing Heretic:
+**Installation:** vLLM is an optional dependency that's included automatically when you use the installation methods above:
 
-```bash
-pip install vllm
-```
+- **With uv:** vLLM is included when you run `uv sync --all-extras`
+- **With Conda:** vLLM is listed in `environment.yml` and will be installed automatically
+- **With Docker:** vLLM is included in the Docker image
+
+If vLLM fails to install on your system (it requires CUDA/ROCm), Heretic will automatically fall back to the transformers backend.
 
 To use vLLM for evaluating a saved model:
 
@@ -109,29 +180,31 @@ inference_backend = "vllm"
 
 **When to use vLLM:**
 - Evaluating pre-abliterated models (much faster)
-- Working with AWQ/GPTQ quantized models
+- Fast inference with non-quantized abliterated models
 - When you need high-throughput inference
 
 **When to use transformers (default):**
-- Running the abliteration optimization process
+- Running the abliteration optimization process (required)
 - When vLLM is not available on your system
 - For maximum compatibility
 
-**Example workflow with AWQ models:**
+**Recommended workflow:**
 
 ```bash
-# Step 1: Abliterate an AWQ model (uses transformers for weight modification)
-heretic TheBloke/Llama-2-7B-Chat-AWQ
+# Step 1: Start with the BASE (non-quantized) model for abliteration
+heretic meta-llama/Llama-2-7b-chat-hf
 
-# Step 2: Save the abliterated model
-# (Follow the interactive prompts to save)
+# Step 2: Save the abliterated model (follow interactive prompts)
+# The abliterated model will be saved to your chosen directory
 
-# Step 3: Evaluate with vLLM for fast performance
-heretic --model TheBloke/Llama-2-7B-Chat-AWQ \
+# Step 3: Use vLLM for fast inference with the abliterated model
+heretic --model meta-llama/Llama-2-7b-chat-hf \
         --evaluate-model ./saved-abliterated-model \
-        --inference-backend vllm \
-        --quantization awq
+        --inference-backend vllm
 ```
+
+**Note:** If you need a quantized model for deployment, quantize the abliterated model after saving it,
+rather than trying to abliterate an already-quantized model.
 
 **Troubleshooting vLLM:**
 

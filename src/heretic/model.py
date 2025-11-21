@@ -25,6 +25,7 @@ from .utils import batchify, empty_cache, print
 # Import vLLM backend, but make it optional
 try:
     from .vllm_backend import VLLMInferenceBackend
+
     VLLM_AVAILABLE = True
 except ImportError:
     VLLM_AVAILABLE = False
@@ -63,7 +64,9 @@ class Model:
             settings.inference_backend = "transformers"
 
         if settings.inference_backend == "vllm":
-            print("* Using [bold]vLLM[/] backend for inference (faster, especially for AWQ models)")
+            print(
+                "* Using [bold]vLLM[/] backend for inference (faster, especially for AWQ models)"
+            )
         else:
             print("* Using [bold]transformers[/] backend for inference")
 
@@ -106,6 +109,44 @@ class Model:
         if self.model is None:
             raise Exception("Failed to load model with all configured dtypes.")
 
+        # Check if model appears to be quantized and warn user
+        # Only perform this check during abliteration, not evaluation, because:
+        # 1. Evaluation doesn't modify weights, so quantized models are fine
+        # 2. We may be evaluating a saved abliterated model that was later quantized
+        if settings.evaluate_model is None:
+            is_quantized = False
+            try:
+                # Check model config for quantization_config attribute (most reliable)
+                if hasattr(self.model.config, "quantization_config"):
+                    is_quantized = True
+                # Fall back to checking first layer for quantized weight attributes
+                elif hasattr(self.get_layers()[0].self_attn.o_proj, "qweight"):
+                    is_quantized = True
+                elif hasattr(self.get_layers()[0].self_attn.o_proj, "qzeros"):
+                    is_quantized = True
+                # Last resort: check model name for common quantization indicators
+                elif any(
+                    indicator in settings.model.lower()
+                    for indicator in ["awq", "gptq", "gguf"]
+                ):
+                    is_quantized = True
+            except (AttributeError, IndexError):
+                # If check fails (e.g., unusual model structure), continue without warning
+                pass
+
+            if is_quantized:
+                print()
+                print(
+                    "[yellow]Warning: This model appears to be quantized (AWQ/GPTQ).[/]"
+                )
+                print(
+                    "[yellow]Abliteration of quantized models may not work correctly.[/]"
+                )
+                print(
+                    "[yellow]Consider using the base (non-quantized) version of this model instead.[/]"
+                )
+                print()
+
         print(f"* Transformer model with [bold]{len(self.get_layers())}[/] layers")
         print("* Abliterable components:")
         for component, matrices in self.get_layer_matrices(0).items():
@@ -137,25 +178,25 @@ class Model:
     def initialize_vllm_backend(self, model_path: str | None = None):
         """
         Initialize vLLM backend for inference.
-        
+
         This should be called after abliteration is complete to enable
         fast inference with the modified model.
-        
+
         Args:
             model_path: Path to the model (if None, uses settings.model)
         """
         if self.settings.inference_backend != "vllm" or not VLLM_AVAILABLE:
             return
-        
+
         if model_path is None:
             model_path = self.settings.model
-        
+
         # Clean up existing vLLM backend
         if self.vllm_backend is not None:
             self.vllm_backend.cleanup()
             self.vllm_backend = None
             empty_cache()
-        
+
         try:
             print("* Initializing vLLM backend for inference...")
             # Use base model for tokenizer since tokenizer doesn't change during abliteration
@@ -172,7 +213,9 @@ class Model:
             print("  * [green]vLLM backend initialized successfully[/]")
             if self.settings.quantization:
                 print(f"  * Using quantization: [bold]{self.settings.quantization}[/]")
-            print(f"  * GPU memory utilization: [bold]{self.settings.vllm_gpu_memory_utilization:.0%}[/]")
+            print(
+                f"  * GPU memory utilization: [bold]{self.settings.vllm_gpu_memory_utilization:.0%}[/]"
+            )
         except Exception as error:
             print(f"  * [yellow]Warning: Failed to initialize vLLM backend: {error}[/]")
             print("  * [yellow]Falling back to transformers backend[/]")
@@ -252,6 +295,14 @@ class Model:
         direction_index: float | None,
         parameters: dict[str, AbliterationParameters],
     ):
+        """
+        Modify model weights to remove refusal behavior.
+
+        Note: This method performs in-place weight modifications using matrix.sub_().
+        It is designed for standard (non-quantized) models. Quantized models (AWQ/GPTQ)
+        may not support in-place weight modifications and should be abliterated in their
+        non-quantized form first, then quantized afterwards if needed.
+        """
         if direction_index is None:
             refusal_direction = None
         else:
@@ -355,7 +406,7 @@ class Model:
                 chat_prompts,
                 max_new_tokens=self.settings.max_response_length,
             )
-        
+
         # Use transformers backend (default and for abliteration workflow)
         inputs, outputs = self.generate(
             prompts,
