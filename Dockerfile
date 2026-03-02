@@ -38,18 +38,20 @@ COPY config.default.toml ./
 # Install Heretic and dependencies
 # Install base dependencies first
 RUN pip3 install --no-cache-dir \
-    accelerate>=1.10.0 \
-    datasets>=4.0.0 \
-    hf-transfer>=0.1.9 \
-    huggingface-hub>=0.34.4 \
-    optuna>=4.5.0 \
-    pydantic-settings>=2.10.1 \
-    questionary>=2.1.1 \
-    rich>=14.1.0 \
-    transformers>=4.55.2
+    accelerate~=1.10 \
+    bitsandbytes~=0.45 \
+    datasets~=4.0 \
+    hf-transfer~=0.1 \
+    huggingface-hub~=0.34 \
+    kernels~=0.11 \
+    optuna~=4.5 \
+    peft~=0.14 \
+    psutil~=7.1 \
+    pydantic-settings~=2.10 \
+    questionary~=2.1 \
+    rich~=14.1 \
+    transformers~=4.57
 
-# Install vLLM separately for faster inference (optional but recommended)
-RUN pip3 install --no-cache-dir vllm>=0.11.0 || echo "vLLM installation failed, continuing without it"
 
 # Install Heretic in development mode
 RUN pip3 install --no-cache-dir -e .

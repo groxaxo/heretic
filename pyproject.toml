@@ -1,6 +1,6 @@
 [project]
 name = "heretic-llm"
-version = "1.0.1"
+version = "1.2.0"
 description = "Fully automatic censorship removal for language models"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -22,25 +22,35 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "accelerate>=1.10.0",
-    "datasets>=4.0.0",
-    "hf-transfer>=0.1.9",
-    "huggingface-hub>=0.34.4",
-    "optuna>=4.5.0",
-    "pydantic-settings>=2.10.1",
-    "questionary>=2.1.1",
-    "rich>=14.1.0",
-    "transformers>=4.55.2",
+    "accelerate~=1.10",
+    "bitsandbytes~=0.45",
+    "datasets~=4.0",
+    "hf-transfer~=0.1",
+    "huggingface-hub~=0.34",
+    "kernels~=0.11",
+    "optuna~=4.5",
+    "peft~=0.14",
+    "psutil~=7.1",
+    "pydantic-settings~=2.10",
+    "questionary~=2.1",
+    "rich~=14.1",
+    "transformers~=4.57",
 ]
 
 [project.optional-dependencies]
-vllm = [
-    "vllm>=0.11.0",
+research = [
+    "geom-median~=0.1",
+    "imageio~=2.37",
+    "matplotlib~=3.10",
+    "numpy~=2.2",
+    "pacmap~=0.8",
+    "scikit-learn~=1.7",
 ]
 
 [dependency-groups]
 dev = [
     "ruff>=0.14.5",
+    "ty>=0.0.5",
 ]
 
 [project.urls]
@@ -48,7 +58,7 @@ Homepage = "https://github.com/p-e-w/heretic"
 Documentation = "https://github.com/p-e-w/heretic"
 Repository = "https://github.com/p-e-w/heretic.git"
 Issues = "https://github.com/p-e-w/heretic/issues"
-Changelog = "https://github.com/p-e-w/heretic/commits/master/"
+Changelog = "https://github.com/p-e-w/heretic/releases"
 
 [project.scripts]
 heretic = "heretic.main:main"
