@@ -1,35 +1,47 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2025  Philipp Emanuel Weidmann <pew@worldwidemann.com>
+# Copyright (C) 2025-2026  Philipp Emanuel Weidmann <pew@worldwidemann.com> + contributors
 
 import math
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Type, cast
 
+import bitsandbytes as bnb
 import torch
+import torch.linalg as LA
 import torch.nn.functional as F
-from torch import LongTensor, Tensor
-from torch.nn import ModuleList
+from peft import LoraConfig, PeftModel, get_peft_model
+from peft.tuners.lora.layer import Linear
+from torch import FloatTensor, LongTensor, Tensor
+from torch.nn import Module, ModuleList
 from transformers import (
     AutoModelForCausalLM,
+    AutoModelForImageTextToText,
     AutoTokenizer,
     BatchEncoding,
+    BitsAndBytesConfig,
+    PretrainedConfig,
+    PreTrainedModel,
     PreTrainedTokenizerBase,
     TextStreamer,
 )
-from transformers.generation.utils import GenerateOutput
+from transformers.generation import (
+    GenerateDecoderOnlyOutput,  # ty:ignore[possibly-missing-import]
+)
 
-from .config import Settings
-from .utils import batchify, empty_cache, print
+from .config import QuantizationMethod, RowNormalization, Settings
+from .utils import Prompt, batchify, empty_cache, print
 
-# Import vLLM backend, but make it optional
-try:
-    from .vllm_backend import VLLMInferenceBackend
 
-    VLLM_AVAILABLE = True
-except ImportError:
-    VLLM_AVAILABLE = False
-    VLLMInferenceBackend = None
+def get_model_class(
+    model: str,
+) -> Type[AutoModelForImageTextToText] | Type[AutoModelForCausalLM]:
+    configs = PretrainedConfig.get_config_dict(model)
+
+    if any([("vision_config" in config) for config in configs]):
+        return AutoModelForImageTextToText
+    else:
+        return AutoModelForCausalLM
 
 
 @dataclass
@@ -41,254 +53,328 @@ class AbliterationParameters:
 
 
 class Model:
+    model: PreTrainedModel | PeftModel
+    tokenizer: PreTrainedTokenizerBase
+    peft_config: LoraConfig
+
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.vllm_backend = None
-        self.current_dtype = None
         self.response_prefix = ""
+        self.needs_reload = False
 
         print()
         print(f"Loading model [bold]{settings.model}[/]...")
 
-        # Validate inference backend setting
-        if settings.inference_backend not in ["transformers", "vllm"]:
-            raise ValueError(
-                f"Invalid inference_backend: {settings.inference_backend}. "
-                "Must be 'transformers' or 'vllm'."
-            )
-
-        if settings.inference_backend == "vllm" and not VLLM_AVAILABLE:
-            print(
-                "[yellow]Warning: vLLM backend requested but vLLM is not installed. "
-                "Falling back to transformers backend.[/]"
-            )
-            settings.inference_backend = "transformers"
-
-        if settings.inference_backend == "vllm":
-            print(
-                "* Using [bold]vLLM[/] backend for inference (faster, especially for AWQ models)"
-            )
-        else:
-            print("* Using [bold]transformers[/] backend for inference")
-
-        self.tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
-            settings.model
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            settings.model,
+            trust_remote_code=settings.trust_remote_code,
         )
 
         # Fallback for tokenizers that don't declare a special pad token.
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-            self.tokenizer.padding_side = "left"
 
-        self.model = None
+        # CRITICAL: Always use left-padding for decoder-only models during generation.
+        #           Right-padding causes empty outputs because the model sees PAD tokens
+        #           after the prompt and thinks the sequence is complete.
+        self.tokenizer.padding_side = "left"
+
+        self.model = None  # ty:ignore[invalid-assignment]
+        self.max_memory = (
+            {int(k) if k.isdigit() else k: v for k, v in settings.max_memory.items()}
+            if settings.max_memory
+            else None
+        )
+        self.trusted_models = {settings.model: settings.trust_remote_code}
+
+        if self.settings.evaluate_model is not None:
+            self.trusted_models[settings.evaluate_model] = settings.trust_remote_code
 
         for dtype in settings.dtypes:
             print(f"* Trying dtype [bold]{dtype}[/]... ", end="")
 
             try:
-                self.model = AutoModelForCausalLM.from_pretrained(
+                quantization_config = self._get_quantization_config(dtype)
+
+                extra_kwargs = {}
+                # Only include quantization_config if it's not None
+                # (some models like gpt-oss have issues with explicit None).
+                if quantization_config is not None:
+                    extra_kwargs["quantization_config"] = quantization_config
+
+                self.model = get_model_class(settings.model).from_pretrained(
                     settings.model,
                     dtype=dtype,
                     device_map=settings.device_map,
+                    max_memory=self.max_memory,
+                    trust_remote_code=self.trusted_models.get(settings.model),
+                    **extra_kwargs,
                 )
-                self.current_dtype = dtype
+
+                # If we reach this point and the model requires trust_remote_code,
+                # either the user accepted, or settings.trust_remote_code is True.
+                if self.trusted_models.get(settings.model) is None:
+                    self.trusted_models[settings.model] = True
 
                 # A test run can reveal dtype-related problems such as the infamous
                 # "RuntimeError: probability tensor contains either `inf`, `nan` or element < 0"
                 # (https://github.com/meta-llama/llama/issues/380).
-                self.generate(["Test"], max_new_tokens=1)
+                self.generate(
+                    [
+                        Prompt(
+                            system=settings.system_prompt,
+                            user="What is 1+1?",
+                        )
+                    ],
+                    max_new_tokens=1,
+                )
             except Exception as error:
-                self.model = None
-                self.current_dtype = None
+                self.model = None  # ty:ignore[invalid-assignment]
                 empty_cache()
                 print(f"[red]Failed[/] ({error})")
                 continue
 
-            print("[green]Ok[/]")
+            if settings.quantization == QuantizationMethod.BNB_4BIT:
+                print("[green]Ok[/] (quantized to 4-bit precision)")
+            else:
+                print("[green]Ok[/]")
+
             break
 
         if self.model is None:
             raise Exception("Failed to load model with all configured dtypes.")
 
-        # Check if model appears to be quantized and warn user
-        # Only perform this check during abliteration, not evaluation, because:
-        # 1. Evaluation doesn't modify weights, so quantized models are fine
-        # 2. We may be evaluating a saved abliterated model that was later quantized
-        if settings.evaluate_model is None:
-            is_quantized = False
-            try:
-                # Check model config for quantization_config attribute (most reliable)
-                if hasattr(self.model.config, "quantization_config"):
-                    is_quantized = True
-                # Fall back to checking first layer for quantized weight attributes
-                elif hasattr(self.get_layers()[0].self_attn.o_proj, "qweight"):
-                    is_quantized = True
-                elif hasattr(self.get_layers()[0].self_attn.o_proj, "qzeros"):
-                    is_quantized = True
-                # Last resort: check model name for common quantization indicators
-                elif any(
-                    indicator in settings.model.lower()
-                    for indicator in ["awq", "gptq", "gguf"]
-                ):
-                    is_quantized = True
-            except (AttributeError, IndexError):
-                # If check fails (e.g., unusual model structure), continue without warning
-                pass
+        self._apply_lora()
 
-            if is_quantized:
-                print()
-                print(
-                    "[yellow]Warning: This model appears to be quantized (AWQ/GPTQ).[/]"
-                )
-                print(
-                    "[yellow]Abliteration of quantized models may not work correctly.[/]"
-                )
-                print(
-                    "[yellow]Consider using the base (non-quantized) version of this model instead.[/]"
-                )
-                print()
+        # LoRA B matrices are initialized to zero by default in PEFT,
+        # so we don't need to do anything manually.
 
         print(f"* Transformer model with [bold]{len(self.get_layers())}[/] layers")
         print("* Abliterable components:")
-        for component, matrices in self.get_layer_matrices(0).items():
+        for component, modules in self.get_layer_modules(0).items():
             print(
-                f"  * [bold]{component}[/]: [bold]{len(matrices)}[/] matrices per layer"
+                f"  * [bold]{component}[/]: [bold]{len(modules)}[/] modules per layer"
             )
 
-    def reload_model(self):
-        # Keep the current dtype for consistency (already stored as string)
-        reload_dtype = self.current_dtype if self.current_dtype else "auto"
+    def _apply_lora(self):
+        # Guard against calling this method at the wrong time.
+        assert isinstance(self.model, PreTrainedModel)
 
-        # Clean up vLLM backend if it exists
-        if self.vllm_backend is not None:
-            self.vllm_backend.cleanup()
-            self.vllm_backend = None
-            empty_cache()
+        # Always use LoRA adapters for abliteration (faster reload, no weight modification).
+        # We use the leaf names (e.g. "o_proj") as target modules.
+        # This may cause LoRA adapters to be attached to unrelated modules (e.g. "conv.o_proj"),
+        # but this is harmless as we only abliterate the modules we target in `abliterate()`,
+        # leaving the others at their default (identity) state.
+        # NOTE: This will need to be updated when hybrid layer support (#43) is merged.
+        target_modules = [
+            comp.split(".")[-1] for comp in self.get_abliterable_components()
+        ]
 
-        # Purge existing model object from memory to make space.
-        self.model = None
-        empty_cache()
+        if self.settings.row_normalization != RowNormalization.FULL:
+            # Rank 1 is sufficient for directional ablation without renormalization.
+            lora_rank = 1
+        else:
+            # Row magnitude preservation introduces nonlinear effects.
+            lora_rank = self.settings.full_normalization_lora_rank
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.settings.model,
-            dtype=reload_dtype,
-            device_map=self.settings.device_map,
+        self.peft_config = LoraConfig(
+            r=lora_rank,
+            target_modules=target_modules,
+            lora_alpha=lora_rank,  # Apply adapter at full strength.
+            lora_dropout=0,
+            bias="none",
+            # Even if we're using AutoModelForImageTextToText, this is still correct,
+            # as VL models are typically just causal LMs with an added image encoder.
+            task_type="CAUSAL_LM",
         )
-        # current_dtype remains the same as before
 
-    def initialize_vllm_backend(self, model_path: str | None = None):
+        # self.peft_config is a LoraConfig object rather than a dictionary,
+        # so the result is a PeftModel rather than a PeftMixedModel.
+        self.model = cast(PeftModel, get_peft_model(self.model, self.peft_config))
+
+        print(f"* LoRA adapters initialized (targets: {', '.join(target_modules)})")
+
+    def _get_quantization_config(self, dtype: str) -> BitsAndBytesConfig | None:
         """
-        Initialize vLLM backend for inference.
-
-        This should be called after abliteration is complete to enable
-        fast inference with the modified model.
+        Creates quantization config based on settings.
 
         Args:
-            model_path: Path to the model (if None, uses settings.model)
+            dtype: The dtype string (e.g., "auto", "bfloat16")
+
+        Returns:
+            BitsAndBytesConfig or None
         """
-        if self.settings.inference_backend != "vllm" or not VLLM_AVAILABLE:
+        if self.settings.quantization == QuantizationMethod.BNB_4BIT:
+            # BitsAndBytesConfig expects a torch.dtype, not a string.
+            if dtype == "auto":
+                compute_dtype = torch.bfloat16
+            else:
+                compute_dtype = getattr(torch, dtype)
+
+            return BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=compute_dtype,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+            )
+        return None
+
+    def get_merged_model(self) -> PreTrainedModel:
+        # Guard against calling this method at the wrong time.
+        assert isinstance(self.model, PeftModel)
+
+        # Check if we need special handling for quantized models
+        if self.settings.quantization == QuantizationMethod.BNB_4BIT:
+            # Quantized models need special handling - we must reload the base model
+            # in full precision to merge the LoRA adapters
+
+            # Get the adapter state dict before we do anything
+            adapter_state = {}
+            for name, param in self.model.named_parameters():
+                if "lora_" in name:
+                    adapter_state[name] = param.data.clone().cpu()
+
+            # Load base model in full precision on CPU to avoid VRAM issues
+            print("* Loading base model on CPU (this may take a while)...")
+            base_model = get_model_class(self.settings.model).from_pretrained(
+                self.settings.model,
+                torch_dtype=self.model.dtype,
+                device_map="cpu",
+                trust_remote_code=self.trusted_models.get(self.settings.model),
+            )
+
+            # Apply LoRA adapters to the CPU model
+            print("* Applying LoRA adapters...")
+            peft_model = get_peft_model(base_model, self.peft_config)
+
+            # Copy the trained adapter weights
+            for name, param in peft_model.named_parameters():
+                if name in adapter_state:
+                    param.data = adapter_state[name].to(param.device)
+
+            # Merge and unload
+            print("* Merging LoRA adapters into base model...")
+            merged_model = peft_model.merge_and_unload()
+            return merged_model
+        else:
+            # Non-quantized model - can merge directly
+            print("* Merging LoRA adapters into base model...")
+            merged_model = self.model.merge_and_unload()
+            # merge_and_unload() modifies self.model in-place, destroying LoRA adapters.
+            # Mark for full reload if user switches trials later.
+            self.needs_reload = True
+            return merged_model
+
+    def reset_model(self):
+        """
+        Resets the model to a clean state for the next trial or evaluation.
+
+        Behavior:
+        - Fast path: If the same model is loaded and doesn't need full reload,
+          resets LoRA adapter weights to zero (identity transformation).
+        - Slow path: If switching models or after merge_and_unload(),
+          performs full model reload with quantization config.
+        """
+        current_model = getattr(self.model.config, "name_or_path", None)
+        if current_model == self.settings.model and not self.needs_reload:
+            # Reset LoRA adapters to zero (identity transformation)
+            for name, module in self.model.named_modules():
+                if "lora_B" in name and hasattr(module, "weight"):
+                    torch.nn.init.zeros_(module.weight)
             return
 
-        if model_path is None:
-            model_path = self.settings.model
+        dtype = self.model.dtype
 
-        # Clean up existing vLLM backend
-        if self.vllm_backend is not None:
-            self.vllm_backend.cleanup()
-            self.vllm_backend = None
-            empty_cache()
+        # Purge existing model object from memory to make space.
+        self.model = None  # ty:ignore[invalid-assignment]
+        empty_cache()
 
-        try:
-            print("* Initializing vLLM backend for inference...")
-            # Use base model for tokenizer since tokenizer doesn't change during abliteration
-            # The abliterated model and base model share the same tokenizer
-            self.vllm_backend = VLLMInferenceBackend(
-                model_path=model_path,
-                tokenizer_path=self.settings.model,
-                dtype=self.current_dtype if self.current_dtype else "auto",
-                device_map=self.settings.device_map,
-                quantization=self.settings.quantization,
-                gpu_memory_utilization=self.settings.vllm_gpu_memory_utilization,
-                max_model_len=self.settings.vllm_max_model_len,
-            )
-            print("  * [green]vLLM backend initialized successfully[/]")
-            if self.settings.quantization:
-                print(f"  * Using quantization: [bold]{self.settings.quantization}[/]")
-            print(
-                f"  * GPU memory utilization: [bold]{self.settings.vllm_gpu_memory_utilization:.0%}[/]"
-            )
-        except Exception as error:
-            print(f"  * [yellow]Warning: Failed to initialize vLLM backend: {error}[/]")
-            print("  * [yellow]Falling back to transformers backend[/]")
-            self.vllm_backend = None
+        quantization_config = self._get_quantization_config(str(dtype).split(".")[-1])
+
+        # Build kwargs, only include quantization_config if it's not None
+        extra_kwargs = {}
+        if quantization_config is not None:
+            extra_kwargs["quantization_config"] = quantization_config
+
+        self.model = get_model_class(self.settings.model).from_pretrained(
+            self.settings.model,
+            dtype=dtype,
+            device_map=self.settings.device_map,
+            max_memory=self.max_memory,
+            trust_remote_code=self.trusted_models.get(self.settings.model),
+            **extra_kwargs,
+        )
+
+        self._apply_lora()
+
+        self.needs_reload = False
 
     def get_layers(self) -> ModuleList:
+        model = self.model
+
+        # Unwrap PeftModel (always true after _apply_lora)
+        if isinstance(model, PeftModel):
+            model = model.base_model.model
+
         # Most multimodal models.
         with suppress(Exception):
-            return self.model.model.language_model.layers
+            return model.model.language_model.layers
 
         # Text-only models.
-        return self.model.model.layers
+        return model.model.layers
 
-    def get_layer_matrices(self, layer_index: int) -> dict[str, list[Tensor]]:
+    def get_layer_modules(self, layer_index: int) -> dict[str, list[Module]]:
         layer = self.get_layers()[layer_index]
 
-        matrices = {}
+        modules = {}
 
-        def try_add(component: str, matrix: Any):
-            # Handle Triton tensors (e.g., from MXFP4 quantization) by extracting
-            # the underlying PyTorch tensor via the .data attribute.
-            if hasattr(matrix, "data") and torch.is_tensor(matrix.data):
-                matrix = matrix.data
-
-            assert torch.is_tensor(matrix)
-
-            if component not in matrices:
-                matrices[component] = []
-
-            matrices[component].append(matrix)
+        def try_add(component: str, module: Any):
+            # Only add if it's a proper nn.Module (PEFT can wrap these with LoRA)
+            if isinstance(module, Module):
+                if component not in modules:
+                    modules[component] = []
+                modules[component].append(module)
+            else:
+                # Assert for unexpected types (catches architecture changes)
+                assert not isinstance(module, Tensor), (
+                    f"Unexpected Tensor in {component} - expected nn.Module"
+                )
 
         # Exceptions aren't suppressed here, because there is currently
         # no alternative location for the attention out-projection.
-        try_add("attn.o_proj", layer.self_attn.o_proj.weight)
+        try_add("attn.o_proj", layer.self_attn.o_proj)  # ty:ignore[possibly-missing-attribute]
 
         # Most dense models.
         with suppress(Exception):
-            try_add("mlp.down_proj", layer.mlp.down_proj.weight)
+            try_add("mlp.down_proj", layer.mlp.down_proj)  # ty:ignore[possibly-missing-attribute]
 
         # Some MoE models (e.g. Qwen3).
         with suppress(Exception):
-            for expert in layer.mlp.experts:
-                try_add("mlp.down_proj", expert.down_proj.weight)
+            for expert in layer.mlp.experts:  # ty:ignore[possibly-missing-attribute, not-iterable]
+                try_add("mlp.down_proj", expert.down_proj)  # ty:ignore[possibly-missing-attribute]
 
         # Phi-3.5-MoE (and possibly others).
         with suppress(Exception):
-            for expert in layer.block_sparse_moe.experts:
-                try_add("mlp.down_proj", expert.w2.weight)
-
-        # gpt-oss MoE.
-        with suppress(Exception):
-            # The implementation of gpt-oss in Transformers differs from many other MoE models
-            # in that it stores the down-projections for all experts in a single 3D tensor,
-            # but thanks to PyTorch's broadcasting magic, it all just works anyway.
-            try_add("mlp.down_proj", layer.mlp.experts.down_proj)
+            for expert in layer.block_sparse_moe.experts:  # ty:ignore[possibly-missing-attribute, not-iterable]
+                try_add("mlp.down_proj", expert.w2)  # ty:ignore[possibly-missing-attribute]
 
         # Granite MoE Hybrid - attention layers with shared_mlp.
         with suppress(Exception):
-            try_add("mlp.down_proj", layer.shared_mlp.output_linear.weight)
+            try_add("mlp.down_proj", layer.shared_mlp.output_linear)  # ty:ignore[possibly-missing-attribute]
 
         # Granite MoE Hybrid - MoE layers with experts.
         with suppress(Exception):
-            for expert in layer.moe.experts:
-                try_add("mlp.down_proj", expert.output_linear.weight)
+            for expert in layer.moe.experts:  # ty:ignore[possibly-missing-attribute, not-iterable]
+                try_add("mlp.down_proj", expert.output_linear)  # ty:ignore[possibly-missing-attribute]
 
-        # We need at least one MLP down-projection.
-        assert matrices["mlp.down_proj"]
+        # We need at least one module across all components for abliteration to work.
+        total_modules = sum(len(mods) for mods in modules.values())
+        assert total_modules > 0, "No abliterable modules found in layer"
 
-        return matrices
+        return modules
 
     def get_abliterable_components(self) -> list[str]:
-        return list(self.get_layer_matrices(0).keys())
+        return list(self.get_layer_modules(0).keys())
 
     def abliterate(
         self,
@@ -296,14 +382,6 @@ class Model:
         direction_index: float | None,
         parameters: dict[str, AbliterationParameters],
     ):
-        """
-        Modify model weights to remove refusal behavior.
-
-        Note: This method performs in-place weight modifications using matrix.sub_().
-        It is designed for standard (non-quantized) models. Quantized models (AWQ/GPTQ)
-        may not support in-place weight modifications and should be abliterated in their
-        non-quantized form first, then quantized afterwards if needed.
-        """
         if direction_index is None:
             refusal_direction = None
         else:
@@ -322,10 +400,11 @@ class Model:
         # Note that some implementations of abliteration also orthogonalize
         # the embedding matrix, but it's unclear if that has any benefits.
         for layer_index in range(len(self.get_layers())):
-            for component, matrices in self.get_layer_matrices(layer_index).items():
+            for component, modules in self.get_layer_modules(layer_index).items():
                 params = parameters[component]
 
-                distance = abs(layer_index - params.max_weight_position)
+                # Type inference fails here for some reason.
+                distance = cast(float, abs(layer_index - params.max_weight_position))
 
                 # Don't orthogonalize layers that are more than
                 # min_weight_distance away from max_weight_position.
@@ -345,37 +424,129 @@ class Model:
                 else:
                     layer_refusal_direction = refusal_direction
 
-                # Projects any right-multiplied vector(s) onto the subspace
-                # spanned by the refusal direction.
-                projector = torch.outer(
-                    layer_refusal_direction,
-                    layer_refusal_direction,
-                ).to(self.model.dtype)
+                for module in modules:
+                    # FIXME: This cast is potentially invalid, because the program logic
+                    #        does not guarantee that the module is of type Linear, and in fact
+                    #        the retrieved modules might not conform to the interface assumed
+                    #        below (though they do in practice). However, this is difficult
+                    #        to fix cleanly, because get_layer_modules is called twice on
+                    #        different model configurations, and PEFT employs different
+                    #        module types depending on the chosen quantization.
+                    module = cast(Linear, module)
 
-                for matrix in matrices:
-                    # Ensure projector is on the same device as the matrix for multi-GPU support.
-                    device_projector = projector.to(matrix.device)
-                    # In-place subtraction is safe as we're not using Autograd.
-                    matrix.sub_(weight * (device_projector @ matrix))
+                    # LoRA abliteration: delta W = -lambda * v * (v^T W)
+                    # lora_B = -lambda * v
+                    # lora_A = v^T W
 
-    def get_chat(self, prompt: str) -> list[dict[str, str]]:
-        return [
-            {"role": "system", "content": self.settings.system_prompt},
-            {"role": "user", "content": prompt},
-        ]
+                    # Use the FP32 refusal direction directly (no downcast/upcast)
+                    # and move to the correct device.
+                    v = layer_refusal_direction.to(module.weight.device)
+
+                    # Get W (dequantize if necessary).
+                    #
+                    # FIXME: This cast is valid only under the assumption that the original
+                    #        module wrapped by the LoRA adapter has a weight attribute.
+                    #        See the comment above for why this is currently not guaranteed.
+                    base_weight = cast(Tensor, module.base_layer.weight)
+                    quant_state = getattr(base_weight, "quant_state", None)
+
+                    if quant_state is None:
+                        W = base_weight.to(torch.float32)
+                    else:
+                        # 4-bit quantization.
+                        # This cast is always valid. Type inference fails here because the
+                        # bnb.functional module is not found by ty for some reason.
+                        W = cast(
+                            Tensor,
+                            bnb.functional.dequantize_4bit(  # ty:ignore[possibly-missing-attribute]
+                                base_weight.data,
+                                quant_state,
+                            ).to(torch.float32),
+                        )
+
+                    # Flatten weight matrix to (out_features, in_features).
+                    W = W.view(W.shape[0], -1)
+
+                    if self.settings.row_normalization != RowNormalization.NONE:
+                        # Keep a reference to the original weight matrix so we can subtract it later.
+                        W_org = W
+                        # Get the row norms.
+                        W_row_norms = LA.vector_norm(W, dim=1, keepdim=True)
+                        # Normalize the weight matrix along the rows.
+                        W = F.normalize(W, p=2, dim=1)
+
+                    # Calculate lora_A = v^T W
+                    # v is (d_out,), W is (d_out, d_in)
+                    # v @ W -> (d_in,)
+                    lora_A = (v @ W).view(1, -1)
+
+                    # Calculate lora_B = -weight * v
+                    # v is (d_out,)
+                    lora_B = (-weight * v).view(-1, 1)
+
+                    if self.settings.row_normalization == RowNormalization.PRE:
+                        # Make the LoRA adapter apply to the original weight matrix.
+                        lora_B = W_row_norms * lora_B
+                    elif self.settings.row_normalization == RowNormalization.FULL:
+                        # Approximates https://huggingface.co/blog/grimjim/norm-preserving-biprojected-abliteration
+                        W = W + lora_B @ lora_A
+                        # Normalize the adjusted weight matrix along the rows.
+                        W = F.normalize(W, p=2, dim=1)
+                        # Restore the original row norms of the weight matrix.
+                        W = W * W_row_norms
+                        # Subtract the original matrix to turn W into a delta.
+                        W = W - W_org
+                        # Use a low-rank SVD to get an approximation of the matrix.
+                        r = self.peft_config.r
+                        U, S, Vh = torch.svd_lowrank(W, q=2 * r + 4, niter=6)
+                        # Truncate it to the part we want to store in the LoRA adapter.
+                        # Note: svd_lowrank actually returns V, so transpose it to get Vh.
+                        U = U[:, :r]
+                        S = S[:r]
+                        Vh = Vh[:, :r].T
+                        # Transfer it into the LoRA adapter components. Split the singular values
+                        # evenly between the two components to keep their norms balanced and avoid
+                        # potential issues with numerical stability.
+                        sqrt_S = torch.sqrt(S)
+                        lora_B = U @ torch.diag(sqrt_S)
+                        lora_A = torch.diag(sqrt_S) @ Vh
+
+                    # Assign to adapters. The adapter name is "default", because that's
+                    # what PEFT uses when no name is explicitly specified, as above.
+                    # These casts are therefore valid.
+                    weight_A = cast(Tensor, module.lora_A["default"].weight)
+                    weight_B = cast(Tensor, module.lora_B["default"].weight)
+                    weight_A.data = lora_A.to(weight_A.dtype)
+                    weight_B.data = lora_B.to(weight_B.dtype)
 
     def generate(
         self,
-        prompts: list[str],
+        prompts: list[Prompt],
         **kwargs: Any,
-    ) -> tuple[BatchEncoding, GenerateOutput | LongTensor]:
-        chats = [self.get_chat(prompt) for prompt in prompts]
+    ) -> tuple[BatchEncoding, GenerateDecoderOnlyOutput | LongTensor]:
+        chats = [
+            [
+                {"role": "system", "content": prompt.system},
+                {"role": "user", "content": prompt.user},
+            ]
+            for prompt in prompts
+        ]
 
-        chat_prompts: list[str] = self.tokenizer.apply_chat_template(
-            chats,
-            add_generation_prompt=True,
-            tokenize=False,
+        # This cast is valid because list[str] is the return type
+        # for batched operation with tokenize=False.
+        chat_prompts = cast(
+            list[str],
+            self.tokenizer.apply_chat_template(
+                chats,
+                add_generation_prompt=True,
+                tokenize=False,
+            ),
         )
+
+        if self.response_prefix:
+            # Append the common response prefix to the prompts so that evaluation happens
+            # at the point where responses start to differ for different prompts.
+            chat_prompts = [prompt + self.response_prefix for prompt in chat_prompts]
 
         inputs = self.tokenizer(
             chat_prompts,
@@ -384,60 +555,52 @@ class Model:
             return_token_type_ids=False,
         ).to(self.model.device)
 
-        return inputs, self.model.generate(
+        # FIXME: The type checker has been disabled here because of the extremely complex
+        #        interplay between different generate() signatures and dynamic delegation.
+        outputs = self.model.generate(
             **inputs,
             **kwargs,
-            pad_token_id=self.tokenizer.eos_token_id,
+            pad_token_id=self.tokenizer.pad_token_id,
             do_sample=False,  # Use greedy decoding to ensure deterministic outputs.
+        )  # ty:ignore[call-non-callable]
+
+        return inputs, outputs
+
+    def get_responses(
+        self,
+        prompts: list[Prompt],
+        skip_special_tokens: bool = False,
+    ) -> list[str]:
+        inputs, outputs = self.generate(
+            prompts,
+            max_new_tokens=self.settings.max_response_length,
         )
 
-    def get_responses(self, prompts: list[str]) -> list[str]:
-        # Note: vLLM backend is only used when evaluating a pre-saved model,
-        # not during the abliteration trials (where the model is modified in memory).
-        # Use vLLM backend if available for faster inference
-        if self.vllm_backend is not None:
-            # Format prompts with chat template
-            chats = [self.get_chat(prompt) for prompt in prompts]
-            chat_prompts: list[str] = self.tokenizer.apply_chat_template(
-                chats,
-                add_generation_prompt=True,
-                tokenize=False,
-            )
-            responses = self.vllm_backend.get_responses(
-                chat_prompts,
-                max_new_tokens=self.settings.max_response_length,
-            )
-        else:
-            # Use transformers backend (default and for abliteration workflow)
-            inputs, outputs = self.generate(
-                prompts,
-                max_new_tokens=self.settings.max_response_length,
-            )
+        return self.tokenizer.batch_decode(
+            # Extract the newly generated part.
+            # This cast is valid because the input_ids property is a Tensor
+            # if the tokenizer is invoked with return_tensors="pt", as above.
+            outputs[:, cast(Tensor, inputs["input_ids"]).shape[1] :],
+            skip_special_tokens=skip_special_tokens,
+        )
 
-            # Return only the newly generated part.
-            responses = self.tokenizer.batch_decode(
-                outputs[:, inputs["input_ids"].shape[1] :],
-                skip_special_tokens=True,
-            )
-
-        # Strip known response prefix (e.g. CoT output wrapper).
-        if self.response_prefix:
-            responses = [
-                response.removeprefix(self.response_prefix) for response in responses
-            ]
-
-        return responses
-
-    def get_responses_batched(self, prompts: list[str]) -> list[str]:
+    def get_responses_batched(
+        self,
+        prompts: list[Prompt],
+        skip_special_tokens: bool = False,
+    ) -> list[str]:
         responses = []
 
         for batch in batchify(prompts, self.settings.batch_size):
-            for response in self.get_responses(batch):
+            for response in self.get_responses(
+                batch,
+                skip_special_tokens=skip_special_tokens,
+            ):
                 responses.append(response)
 
         return responses
 
-    def get_residuals(self, prompts: list[str]) -> Tensor:
+    def get_residuals(self, prompts: list[Prompt]) -> Tensor:
         # We only generate one token, and we return the residual vectors
         # at that token position, for each prompt and layer.
         _, outputs = self.generate(
@@ -447,8 +610,13 @@ class Model:
             return_dict_in_generate=True,
         )
 
+        # This cast is valid because GenerateDecoderOnlyOutput is the return type
+        # of model.generate with return_dict_in_generate=True.
+        outputs = cast(GenerateDecoderOnlyOutput, outputs)
+
         # Hidden states for the first (only) generated token.
-        hidden_states = outputs.hidden_states[0]
+        # This cast is valid because we passed output_hidden_states=True above.
+        hidden_states = cast(tuple[tuple[FloatTensor]], outputs.hidden_states)[0]
 
         # The returned tensor has shape (prompt, layer, component).
         residuals = torch.stack(
@@ -461,9 +629,23 @@ class Model:
 
         # Upcast the data type to avoid precision (bfloat16) or range (float16)
         # problems during calculations involving residual vectors.
-        return residuals.to(torch.float32)
+        residuals = residuals.to(torch.float32)
 
-    def get_residuals_batched(self, prompts: list[str]) -> Tensor:
+        if 0 <= self.settings.winsorization_quantile < 1:
+            # Apply symmetric winsorization to each layer of the per-prompt residuals.
+            abs_residuals = torch.abs(residuals)
+            # Get the (prompt, layer, 1) quantiles of the (prompt, layer, component) residuals.
+            thresholds = torch.quantile(
+                abs_residuals,
+                self.settings.winsorization_quantile,
+                dim=2,
+                keepdim=True,
+            )
+            return torch.clamp(residuals, -thresholds, thresholds)
+
+        return residuals
+
+    def get_residuals_batched(self, prompts: list[Prompt]) -> Tensor:
         residuals = []
 
         for batch in batchify(prompts, self.settings.batch_size):
@@ -473,7 +655,7 @@ class Model:
 
     # We work with logprobs rather than probabilities for numerical stability
     # when computing the KL divergence.
-    def get_logprobs(self, prompts: list[str]) -> Tensor:
+    def get_logprobs(self, prompts: list[Prompt]) -> Tensor:
         # We only generate one token, and we return the (log) probability distributions
         # over the vocabulary at that token position, for each prompt.
         _, outputs = self.generate(
@@ -483,13 +665,18 @@ class Model:
             return_dict_in_generate=True,
         )
 
+        # This cast is valid because GenerateDecoderOnlyOutput is the return type
+        # of model.generate with return_dict_in_generate=True.
+        outputs = cast(GenerateDecoderOnlyOutput, outputs)
+
         # Logits for the first (only) generated token.
-        logits = outputs.scores[0]
+        # This cast is valid because we passed output_scores=True above.
+        logits = cast(tuple[FloatTensor], outputs.scores)[0]
 
         # The returned tensor has shape (prompt, token).
         return F.log_softmax(logits, dim=-1)
 
-    def get_logprobs_batched(self, prompts: list[str]) -> Tensor:
+    def get_logprobs_batched(self, prompts: list[Prompt]) -> Tensor:
         logprobs = []
 
         for batch in batchify(prompts, self.settings.batch_size):
@@ -498,10 +685,15 @@ class Model:
         return torch.cat(logprobs, dim=0)
 
     def stream_chat_response(self, chat: list[dict[str, str]]) -> str:
-        chat_prompt: str = self.tokenizer.apply_chat_template(
-            chat,
-            add_generation_prompt=True,
-            tokenize=False,
+        # This cast is valid because str is the return type
+        # for single-chat operation with tokenize=False.
+        chat_prompt = cast(
+            str,
+            self.tokenizer.apply_chat_template(
+                chat,
+                add_generation_prompt=True,
+                tokenize=False,
+            ),
         )
 
         inputs = self.tokenizer(
@@ -511,16 +703,21 @@ class Model:
         ).to(self.model.device)
 
         streamer = TextStreamer(
-            self.tokenizer,
+            # The TextStreamer constructor annotates this parameter with the AutoTokenizer
+            # type, which makes no sense because AutoTokenizer is a factory class,
+            # not a base class that tokenizers inherit from.
+            self.tokenizer,  # ty:ignore[invalid-argument-type]
             skip_prompt=True,
             skip_special_tokens=True,
         )
 
+        # FIXME: The type checker has been disabled here because of the extremely complex
+        #        interplay between different generate() signatures and dynamic delegation.
         outputs = self.model.generate(
             **inputs,
             streamer=streamer,
             max_new_tokens=4096,
-        )
+        )  # ty:ignore[call-non-callable]
 
         return self.tokenizer.decode(
             outputs[0, inputs["input_ids"].shape[1] :],
