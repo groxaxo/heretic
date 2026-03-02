@@ -45,6 +45,7 @@ class Model:
         self.settings = settings
         self.vllm_backend = None
         self.current_dtype = None
+        self.response_prefix = ""
 
         print()
         print(f"Loading model [bold]{settings.model}[/]...")
@@ -402,22 +403,30 @@ class Model:
                 add_generation_prompt=True,
                 tokenize=False,
             )
-            return self.vllm_backend.get_responses(
+            responses = self.vllm_backend.get_responses(
                 chat_prompts,
                 max_new_tokens=self.settings.max_response_length,
             )
+        else:
+            # Use transformers backend (default and for abliteration workflow)
+            inputs, outputs = self.generate(
+                prompts,
+                max_new_tokens=self.settings.max_response_length,
+            )
 
-        # Use transformers backend (default and for abliteration workflow)
-        inputs, outputs = self.generate(
-            prompts,
-            max_new_tokens=self.settings.max_response_length,
-        )
+            # Return only the newly generated part.
+            responses = self.tokenizer.batch_decode(
+                outputs[:, inputs["input_ids"].shape[1] :],
+                skip_special_tokens=True,
+            )
 
-        # Return only the newly generated part.
-        return self.tokenizer.batch_decode(
-            outputs[:, inputs["input_ids"].shape[1] :],
-            skip_special_tokens=True,
-        )
+        # Strip known response prefix (e.g. CoT output wrapper).
+        if self.response_prefix:
+            responses = [
+                response.removeprefix(self.response_prefix) for response in responses
+            ]
+
+        return responses
 
     def get_responses_batched(self, prompts: list[str]) -> list[str]:
         responses = []

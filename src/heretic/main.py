@@ -7,6 +7,7 @@ import sys
 import time
 import warnings
 from importlib.metadata import version
+from os.path import commonprefix
 from pathlib import Path
 
 import huggingface_hub
@@ -187,6 +188,50 @@ def run():
 
         settings.batch_size = best_batch_size
         print(f"* Chosen batch size: [bold]{settings.batch_size}[/]")
+
+    print()
+    print("Checking for common response prefix...")
+    prefix_check_prompts = good_prompts[:100] + bad_prompts[:100]
+    responses = model.get_responses_batched(prefix_check_prompts)
+
+    # Despite being located in os.path, commonprefix actually performs
+    # a naive string operation without any path-specific logic,
+    # so it can be used on any strings.
+    model.response_prefix = commonprefix(responses).rstrip(" ")
+
+    # Suppress CoT output.
+    recheck_prefix = False
+    if model.response_prefix:
+        # When using any of the predefined prefixes below, we need to check that
+        # the prefix is actually complete (e.g. not missing a trailing newline).
+        recheck_prefix = True
+        if model.response_prefix.startswith("<think>"):
+            # Most thinking models.
+            model.response_prefix = "<think></think>"
+        elif model.response_prefix.startswith("<|channel|>analysis<|message|>"):
+            # gpt-oss.
+            model.response_prefix = "<|channel|>analysis<|message|><|end|><|start|>assistant<|channel|>final<|message|>"
+        elif model.response_prefix.startswith("<thought>"):
+            # Unknown, suggested by user.
+            model.response_prefix = "<thought></thought>"
+        elif model.response_prefix.startswith("[THINK]"):
+            # Unknown, suggested by user.
+            model.response_prefix = "[THINK][/THINK]"
+        else:
+            recheck_prefix = False
+
+    if model.response_prefix:
+        print(f"* Prefix found: [bold]{model.response_prefix!r}[/]")
+    else:
+        print("* None found")
+
+    if recheck_prefix:
+        print("* Rechecking with prefix...")
+        responses = model.get_responses_batched(prefix_check_prompts)
+        additional_prefix = commonprefix(responses).rstrip(" ")
+        if additional_prefix:
+            model.response_prefix += additional_prefix
+            print(f"* Extended prefix found: [bold]{model.response_prefix!r}[/]")
 
     evaluator = Evaluator(settings, model)
 
