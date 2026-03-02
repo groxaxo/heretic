@@ -68,7 +68,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/p-e-w/heretic.git
 cd heretic
 
-# Install dependencies (includes optional vLLM support)
+# Install dependencies (includes optional research features)
 uv sync --all-extras
 
 # Run Heretic
@@ -138,82 +138,6 @@ takes about 45 minutes.
 After Heretic has finished decensoring a model, you are given the option to
 save the model, upload it to Hugging Face, chat with it to test how well it works,
 or any combination of those actions.
-
-
-### Using vLLM for faster inference
-
-Heretic now supports [vLLM](https://github.com/vllm-project/vllm) for significantly faster inference.
-vLLM can provide 10-100x speedup for text generation compared to the standard transformers backend,
-and works well with both quantized and non-quantized models for evaluation purposes.
-
-**Architecture:** The abliteration process (weight modification) always uses transformers, as it requires
-direct access to model weights. vLLM is used only for inference during model evaluation. This hybrid approach
-gives you the flexibility of transformers for the abliteration process and the speed of vLLM for evaluation.
-
-**Important Note on Quantized Models:** Heretic modifies model weights in-place using transformers. This works
-with standard (non-quantized) models. For quantized models (AWQ/GPTQ), you should:
-1. Start with the **base non-quantized model** for abliteration
-2. Save the abliterated model
-3. Optionally quantize the abliterated model afterwards (or use vLLM for fast inference with the non-quantized abliterated model)
-
-Attempting to directly abliterate an already-quantized model may fail or produce unexpected results.
-
-**Installation:** vLLM is an optional dependency that's included automatically when you use the installation methods above:
-
-- **With uv:** vLLM is included when you run `uv sync --all-extras`
-- **With Conda:** vLLM is listed in `environment.yml` and will be installed automatically
-- **With Docker:** vLLM is included in the Docker image
-
-If vLLM fails to install on your system (it requires CUDA/ROCm), Heretic will automatically fall back to the transformers backend.
-
-To use vLLM for evaluating a saved model:
-
-```bash
-heretic --model base/model --evaluate-model path/to/abliterated-model --inference-backend vllm
-```
-
-Or add to your `config.toml`:
-
-```toml
-inference_backend = "vllm"
-```
-
-**When to use vLLM:**
-- Evaluating pre-abliterated models (much faster)
-- Fast inference with non-quantized abliterated models
-- When you need high-throughput inference
-
-**When to use transformers (default):**
-- Running the abliteration optimization process (required)
-- When vLLM is not available on your system
-- For maximum compatibility
-
-**Recommended workflow:**
-
-```bash
-# Step 1: Start with the BASE (non-quantized) model for abliteration
-heretic meta-llama/Llama-2-7b-chat-hf
-
-# Step 2: Save the abliterated model (follow interactive prompts)
-# The abliterated model will be saved to your chosen directory
-
-# Step 3: Use vLLM for fast inference with the abliterated model
-heretic --model meta-llama/Llama-2-7b-chat-hf \
-        --evaluate-model ./saved-abliterated-model \
-        --inference-backend vllm
-```
-
-**Note:** If you need a quantized model for deployment, quantize the abliterated model after saving it,
-rather than trying to abliterate an already-quantized model.
-
-**Troubleshooting vLLM:**
-
-If you experience out-of-memory errors with vLLM, try:
-1. Lower GPU memory utilization: `--vllm-gpu-memory-utilization 0.8`
-2. Set a smaller max sequence length: `--vllm-max-model-len 2048`
-3. Use transformers backend instead: `--inference-backend transformers`
-
-vLLM requires CUDA/ROCm. If vLLM fails to initialize, Heretic will automatically fall back to the transformers backend.
 
 
 ## How it works

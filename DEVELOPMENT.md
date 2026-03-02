@@ -23,7 +23,7 @@ This guide is for contributors and developers who want to work on Heretic itself
 
 3. Install dependencies:
    ```bash
-   # Install all dependencies including optional ones (vLLM) and dev tools
+   # Install all dependencies including optional research extras and dev tools
    uv sync --all-extras --dev
    ```
 
@@ -87,7 +87,6 @@ heretic/
 │   ├── main.py            # Entry point
 │   ├── model.py           # Model loading and abliteration
 │   ├── utils.py           # Utility functions
-│   └── vllm_backend.py    # vLLM inference backend
 ├── config.default.toml    # Default configuration
 ├── pyproject.toml         # Project metadata and dependencies
 ├── uv.lock                # Locked dependencies
@@ -155,19 +154,6 @@ Currently, Heretic does not have a formal test suite. Testing is primarily done 
    ```bash
    uv run heretic --model your-model-name
    ```
-
-## vLLM Backend Development
-
-The vLLM backend (`src/heretic/vllm_backend.py`) is optional and provides faster inference:
-
-- **Design**: vLLM is used only for inference/evaluation, not for weight modification
-- **Optional import**: The backend gracefully handles missing vLLM installation
-- **Integration**: Used via `Model.initialize_vllm_backend()` method
-
-When modifying the vLLM backend:
-1. Ensure it remains optional (handle ImportError)
-2. Test with and without vLLM installed
-3. Verify fallback to transformers backend works
 
 ## Release Process
 

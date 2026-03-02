@@ -26,19 +26,19 @@ dependencies:
   # Install remaining dependencies via pip
   - pip:
       # Core Heretic dependencies
-      - accelerate>=1.10.0
-      - datasets>=4.0.0
-      - hf-transfer>=0.1.9
-      - huggingface-hub>=0.34.4
-      - optuna>=4.5.0
-      - pydantic-settings>=2.10.1
-      - questionary>=2.1.1
-      - rich>=14.1.0
-      - transformers>=4.55.2
-      
-      # Optional: vLLM for faster inference (especially for AWQ/GPTQ models)
-      # Note: vLLM requires CUDA/ROCm and may not install on all systems
-      - vllm>=0.11.0
+      - accelerate~=1.10
+      - bitsandbytes~=0.45
+      - datasets~=4.0
+      - hf-transfer~=0.1
+      - huggingface-hub~=0.34
+      - kernels~=0.11
+      - optuna~=4.5
+      - peft~=0.14
+      - psutil~=7.1
+      - pydantic-settings~=2.10
+      - questionary~=2.1
+      - rich~=14.1
+      - transformers~=4.57
       
       # Install Heretic itself (use -e for development mode)
       # After creating the environment, run: pip install -e .
@@ -53,6 +53,5 @@ variables:
 # 1. For ROCm (AMD GPUs), replace pytorch-cuda with pytorch-rocm
 # 2. For CPU-only installation, remove pytorch-cuda and cudatoolkit
 # 3. Adjust cuda version (11.8, 12.1, etc.) based on your system
-# 4. vLLM is optional but provides significant speedup for inference
-# 5. After creating the environment, cd to the heretic directory and run:
+# 4. After creating the environment, cd to the heretic directory and run:
 #    pip install -e . (for development) or pip install heretic-llm (for release)

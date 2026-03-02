@@ -88,16 +88,16 @@ Set environment variables for configuration:
 **Docker Run:**
 ```bash
 docker run --gpus all -it \
-  -e HERETIC_INFERENCE_BACKEND=vllm \
   -e HERETIC_N_TRIALS=100 \
+  -e HERETIC_QUANTIZATION=bnb_4bit \
   heretic heretic MODEL_NAME
 ```
 
 **Docker Compose:**
 ```yaml
 environment:
-  - HERETIC_INFERENCE_BACKEND=vllm
   - HERETIC_N_TRIALS=100
+  - HERETIC_QUANTIZATION=bnb_4bit
 ```
 
 See `config.default.toml` for all available configuration options.
@@ -136,10 +136,10 @@ docker run --gpus '"device=0,1"' -it heretic heretic MODEL_NAME
 
 ### Memory Limits
 
-The default configuration uses 90% of GPU memory for vLLM. Adjust if needed:
+You can limit per-device memory usage with `max_memory` if needed:
 ```bash
 docker run --gpus all -it \
-  -e HERETIC_VLLM_GPU_MEMORY_UTILIZATION=0.8 \
+  -e HERETIC_MAX_MEMORY={"0":"20GB","cpu":"64GB"} \
   heretic heretic MODEL_NAME
 ```
 
@@ -147,19 +147,16 @@ docker run --gpus all -it \
 
 ### Out of Memory Errors
 
-1. **Reduce GPU memory utilization:**
+1. **Enable 4-bit quantization:**
    ```bash
-   -e HERETIC_VLLM_GPU_MEMORY_UTILIZATION=0.7
+   -e HERETIC_QUANTIZATION=bnb_4bit
    ```
 
-2. **Set max sequence length:**
-   ```bash
-   -e HERETIC_VLLM_MAX_MODEL_LEN=2048
-   ```
+2. **Reduce model size:** Use a smaller model variant when possible.
 
-3. **Use transformers backend instead:**
+3. **Limit batch size:**
    ```bash
-   -e HERETIC_INFERENCE_BACKEND=transformers
+   -e HERETIC_BATCH_SIZE=1
    ```
 
 ### Model Not Found
@@ -214,7 +211,7 @@ docker volume prune
 
 ## Performance Tips
 
-1. **Use vLLM backend** for faster inference (enabled by default in Docker image)
+1. **Enable 4-bit quantization** (`HERETIC_QUANTIZATION=bnb_4bit`) for lower VRAM use
 2. **Keep models cached** using the persistent volume
 3. **Use SSD storage** for Docker volumes for faster I/O
 4. **Allocate sufficient shared memory** if needed: `--shm-size=16g`
@@ -235,8 +232,7 @@ docker-compose run heretic heretic meta-llama/Llama-3.1-8B-Instruct
 ```bash
 docker-compose run heretic heretic \
   --model meta-llama/Llama-3.1-8B-Instruct \
-  --evaluate-model /workspace/models/my-saved-model \
-  --inference-backend vllm
+  --evaluate-model /workspace/models/my-saved-model
 ```
 
 ## Support
