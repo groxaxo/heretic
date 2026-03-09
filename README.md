@@ -1,9 +1,15 @@
-# Heretic: Fully automatic censorship removal for language models
+<img width="128" height="128" align="right" alt="Logo" src="https://github.com/user-attachments/assets/df5f2840-2f92-4991-aa57-252747d7182e" />
+
+# Heretic: Fully automatic censorship removal for language models<br><br>[![Discord](https://img.shields.io/discord/1447831134212984903?color=5865F2&label=discord&labelColor=black&logo=discord&logoColor=white&style=for-the-badge)](https://discord.gg/gdXc48gSyT) [![Follow us on Hugging Face](https://huggingface.co/datasets/huggingface/badges/resolve/main/follow-us-on-hf-md-dark.svg)](https://huggingface.co/heretic-org)
+
+[![#1 Repository of the Day](https://trendshift.io/api/badge/repositories/20538)](https://trendshift.io/repositories/20538)
 
 Heretic is a tool that removes censorship (aka "safety alignment") from
 transformer-based language models without expensive post-training.
 It combines an advanced implementation of directional ablation, also known
-as "abliteration" ([Arditi et al. 2024](https://arxiv.org/abs/2406.11717)),
+as "abliteration" ([Arditi et al. 2024](https://arxiv.org/abs/2406.11717),
+Lai 2025 ([1](https://huggingface.co/blog/grimjim/projected-abliteration),
+[2](https://huggingface.co/blog/grimjim/norm-preserving-biprojected-abliteration))),
 with a TPE-based parameter optimizer powered by [Optuna](https://optuna.org/).
 
 This approach enables Heretic to work **completely automatically.** Heretic
@@ -37,12 +43,37 @@ e.g. `heretic --model google/gemma-3-12b-it --evaluate-model p-e-w/gemma-3-12b-i
 Note that the exact values might be platform- and hardware-dependent.
 The table above was compiled using PyTorch 2.8 on an RTX 5090.)*
 
+Of course, mathematical metrics and automated benchmarks never tell the whole
+story, and are no substitute for human evaluation. Models generated with
+Heretic have been well-received by users (links and emphasis added):
+
+> "I was skeptical before, but I just downloaded
+> [**GPT-OSS 20B Heretic**](https://huggingface.co/p-e-w/gpt-oss-20b-heretic)
+> model and holy shit. It gives properly formatted long responses to sensitive topics,
+> using the exact uncensored words that you would expect from an uncensored model,
+> produces markdown format tables with details and whatnot. Looks like this is
+> the best abliterated version of this model so far..."
+> [*(Link to comment)*](https://old.reddit.com/r/LocalLLaMA/comments/1oymku1/heretic_fully_automatic_censorship_removal_for/np6tba6/)
+
+> "[**Heretic GPT 20b**](https://huggingface.co/p-e-w/gpt-oss-20b-heretic)
+> seems to be the best uncensored model I have tried yet. It doesn't destroy a
+> the model's intelligence and it is answering prompts normally would be
+> rejected by the base model."
+> [*(Link to comment)*](https://old.reddit.com/r/LocalLLaMA/comments/1oymku1/heretic_fully_automatic_censorship_removal_for/npe9jng/)
+
+> "[[**Qwen3-4B-Instruct-2507-heretic**](https://huggingface.co/p-e-w/Qwen3-4B-Instruct-2507-heretic)]
+> Has been the best unquantized abliterated model that I have been able to run on 16gb vram."
+> [*(Link to comment)*](https://old.reddit.com/r/LocalLLaMA/comments/1phjxca/im_calling_these_people_out_right_now/nt06tji/)
+
 Heretic supports most dense models, including many multimodal models, and
 several different MoE architectures. It does not yet support SSMs/hybrid models,
 models with inhomogeneous layers, and certain novel attention systems.
 
 You can find a collection of models that have been decensored using Heretic
-[on Hugging Face](https://huggingface.co/collections/p-e-w/the-bestiary).
+[on Hugging Face](https://huggingface.co/collections/p-e-w/the-bestiary),
+and the community has created and published
+[well over 1,000](https://huggingface.co/models?other=heretic)
+Heretic models in addition to those.
 
 ## Documentation
 
@@ -132,15 +163,65 @@ a configuration file.
 
 At the start of a program run, Heretic benchmarks the system to determine
 the optimal batch size to make the most of the available hardware.
-On an RTX 3090, with the default configuration, decensoring Llama-3.1-8B
-takes about 45 minutes.
+On an RTX 3090, with the default configuration, decensoring Llama-3.1-8B-Instruct
+takes about 45 minutes. Note that Heretic supports model quantization with
+bitsandbytes, which can drastically reduce the amount of VRAM required to process
+models. Set the `quantization` option to `bnb_4bit` to enable quantization.
 
 After Heretic has finished decensoring a model, you are given the option to
 save the model, upload it to Hugging Face, chat with it to test how well it works,
 or any combination of those actions.
 
 
-## How it works
+## Research features
+
+In addition to its primary function of removing model censorship, Heretic also
+provides features designed to support research into the semantics of model internals
+(interpretability). To use those features, install Heretic with the optional
+`research` extra:
+
+```bash
+pip install -U heretic-llm[research]
+# Or, if using uv:
+uv sync --all-extras
+```
+
+This gives you access to the following functionality:
+
+### Generate plots of residual vectors by passing `--plot-residuals`
+
+When run with this flag, Heretic will:
+
+1. Compute residual vectors (hidden states) for the first output token,
+   for each transformer layer, for both "harmful" and "harmless" prompts.
+2. Perform a [PaCMAP projection](https://github.com/YingfanWang/PaCMAP)
+   from residual space to 2D-space.
+3. Left-right align the projections of "harmful"/"harmless" residuals
+   by their geometric medians to make projections for consecutive layers
+   more similar. Additionally, PaCMAP is initialized with the previous
+   layer's projections for each new layer, minimizing disruptive transitions.
+4. Scatter-plot the projections, generating a PNG image for each layer.
+5. Generate an animation showing how residuals transform between layers,
+   as an animated GIF.
+
+<img width="800" height="600" alt="Plot of residual vectors" src="https://github.com/user-attachments/assets/981aa6ed-5ab9-48f0-9abf-2b1a2c430295" />
+
+See [the configuration file](config.default.toml) for options that allow you
+to control various aspects of the generated plots.
+
+Note that PaCMAP is an expensive operation that is performed on the CPU.
+For larger models, it can take an hour or more to compute projections
+for all layers.
+
+### Print details about residual geometry by passing `--print-residual-geometry`
+
+If you are interested in a quantitative analysis of how residual vectors
+for "harmful" and "harmless" prompts relate to each other, this flag gives you
+a rich table with per-layer metrics including cosine similarities between residual
+directions, L2 norms, and the mean silhouette coefficient for the good/bad clusters.
+
+
+## How Heretic works
 
 Heretic implements a parametrized variant of directional ablation. For each
 supported transformer component (currently, attention out-projection and
@@ -205,6 +286,7 @@ The development of Heretic was informed by:
 * [Maxime Labonne's article on abliteration](https://huggingface.co/blog/mlabonne/abliteration),
   as well as some details from the model cards of his own abliterated models (see above)
 * [Jim Lai's article describing "projected abliteration"](https://huggingface.co/blog/grimjim/projected-abliteration)
+  and ["norm-preserving biprojected abliteration"](https://huggingface.co/blog/grimjim/norm-preserving-biprojected-abliteration)
 
 
 ## Citation
@@ -225,7 +307,7 @@ If you use Heretic for your research, please cite it using the following BibTeX 
 
 ## License
 
-Copyright &copy; 2025  Philipp Emanuel Weidmann (<pew@worldwidemann.com>)
+Copyright &copy; 2025-2026  Philipp Emanuel Weidmann (<pew@worldwidemann.com>) + contributors
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published by
