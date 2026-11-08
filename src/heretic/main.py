@@ -128,6 +128,44 @@ def obtain_merge_strategy(settings: Settings) -> str | None:
         return "merge"
 
 
+def find_non_finite_parameters(model: torch.nn.Module) -> list[str]:
+    """
+    Returns the names of all parameters that contain NaN or infinite values.
+    An empty list means all parameters are finite.
+    """
+    return [
+        name
+        for name, parameter in model.named_parameters()
+        if not torch.isfinite(parameter).all()
+    ]
+
+
+def check_export_allowed(model: torch.nn.Module, action: str) -> bool:
+    """
+    Verifies that a model can be safely exported.
+    Refuses to export models with non-finite parameters, which indicate a
+    failed or diverged optimization (e.g. a NaN LoRA merge).
+    """
+    invalid = find_non_finite_parameters(model)
+    if not invalid:
+        return True
+
+    print()
+    print(
+        f"[red]Aborting {action}: {len(invalid)} parameter(s) contain NaN or infinite values.[/]"
+    )
+    for name in invalid[:5]:
+        print(f"  * {name}")
+    if len(invalid) > 5:
+        print(f"  * ... and {len(invalid) - 5} more")
+    print(
+        "[yellow]The model was NOT exported. This usually indicates that the "
+        "optimization diverged (e.g. unstable LBFGS steps in the modifier). "
+        "Re-run the study or adjust the modifier parameters.[/]"
+    )
+    return False
+
+
 def run():
     # Enable expandable segments to reduce memory fragmentation on multi-GPU setups.
     if (
@@ -844,6 +882,8 @@ def run():
                                 continue
 
                             if strategy == "adapter":
+                                if not check_export_allowed(model.model, "export"):
+                                    continue
                                 print("Saving LoRA adapter...")
                                 model.model.save_pretrained(save_directory)
                             else:
@@ -853,6 +893,10 @@ def run():
                                 else:
                                     print("Saving merged model...")
                                     merged_model = model.get_merged_model()
+                                if not check_export_allowed(merged_model, "export"):
+                                    del merged_model
+                                    empty_cache()
+                                    continue
                                 merged_model.save_pretrained(save_directory)
                                 del merged_model
                                 empty_cache()
@@ -897,6 +941,8 @@ def run():
                                 continue
 
                             if strategy == "adapter":
+                                if not check_export_allowed(model.model, "upload"):
+                                    continue
                                 print("Uploading LoRA adapter...")
                                 model.model.push_to_hub(
                                     repo_id,
@@ -910,6 +956,10 @@ def run():
                                 else:
                                     print("Uploading merged model...")
                                     merged_model = model.get_merged_model()
+                                if not check_export_allowed(merged_model, "upload"):
+                                    del merged_model
+                                    empty_cache()
+                                    continue
                                 merged_model.push_to_hub(
                                     repo_id,
                                     private=private,
