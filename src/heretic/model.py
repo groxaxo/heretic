@@ -125,6 +125,7 @@ class Model:
                     settings.model,
                     dtype=dtype,
                     device_map=settings.device_map,
+                    attn_implementation="eager",
                     max_memory=self.max_memory,
                     trust_remote_code=self.trusted_models.get(settings.model),
                     **extra_kwargs,
@@ -260,6 +261,7 @@ class Model:
                 self.settings.model,
                 torch_dtype=self.model.dtype,
                 device_map="cpu",
+                attn_implementation="eager",
                 trust_remote_code=self.trusted_models.get(self.settings.model),
             )
 
@@ -324,6 +326,7 @@ class Model:
             self.settings.model,
             dtype=dtype,
             device_map=self.settings.device_map,
+            attn_implementation="eager",
             max_memory=self.max_memory,
             trust_remote_code=self.trusted_models.get(self.settings.model),
             **extra_kwargs,
